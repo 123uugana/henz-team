@@ -359,6 +359,94 @@ describe('rfid device integration', () => {
     expect(livestockScans.body.data).toHaveLength(2);
   });
 
+  it('accepts device scans, filters duplicates and summarizes daily counts', async () => {
+    const tokens = await registerAndLogin('99256677');
+    const auth = tokens.accessToken;
+    const readerId = 'hh100-gate-summary';
+
+    const reader = await api(
+      '/api/devices/readers',
+      json(
+        'POST',
+        {
+          id: readerId,
+          name: 'Зүүн хаалга',
+          location: 'Зүүн хашаа',
+          deviceSecret: 'device-secret-123',
+        },
+        auth,
+      ),
+    );
+    expect(reader.status).toBe(200);
+    expect(reader.body.data).toMatchObject({
+      id: readerId,
+      location: 'Зүүн хашаа',
+      deviceSecretSet: true,
+    });
+
+    const tagged = await api(
+      '/api/livestock',
+      json('POST', { earNumber: 'S-100', gender: 'FEMALE', rfidEpc: 'E280-SUMMARY-1' }, auth),
+    );
+    expect(tagged.status).toBe(200);
+
+    const untagged = await api(
+      '/api/livestock',
+      json('POST', { earNumber: 'S-101', gender: 'MALE' }, auth),
+    );
+    expect(untagged.status).toBe(200);
+
+    const badSecret = await api(
+      '/api/devices/scans',
+      json('POST', { readerId, secret: 'wrong-secret', scans: [{ epc: 'E280-SUMMARY-1' }] }),
+    );
+    expect(badSecret.status).toBe(401);
+
+    const ingest = await api(
+      '/api/devices/scans',
+      json('POST', {
+        readerId,
+        secret: 'device-secret-123',
+        scans: [
+          { epc: 'e280-summary-1', direction: 'ENTER', scannedAt: '2026-08-14T00:00:00.000Z' },
+          { epc: 'E280-SUMMARY-1', direction: 'EXIT', scannedAt: '2026-08-14T00:00:10.000Z' },
+          {
+            epc: 'E280-SUMMARY-UNKNOWN',
+            direction: 'EXIT',
+            scannedAt: '2026-08-14T00:01:00.000Z',
+          },
+        ],
+      }),
+    );
+    expect(ingest.status).toBe(200);
+    expect(ingest.body.data).toMatchObject({
+      accepted: 3,
+      inserted: 2,
+      duplicates: 1,
+      known: 1,
+      unknown: 1,
+      unknownEpcs: ['E280-SUMMARY-UNKNOWN'],
+    });
+
+    const summary = await api('/api/counts/daily?date=2026-08-14', authorized(auth));
+    expect(summary.status).toBe(200);
+    expect(summary.body.data).toMatchObject({
+      date: '2026-08-14',
+      totalLivestock: 2,
+      scannedLivestock: 1,
+      unscannedLivestock: 1,
+      entered: 1,
+      exited: 1,
+      unknown: 1,
+      unknownEpcs: ['E280-SUMMARY-UNKNOWN'],
+    });
+    expect(summary.body.data.lastScan).toMatchObject({
+      epc: 'E280-SUMMARY-UNKNOWN',
+      readerId,
+      direction: 'EXIT',
+    });
+  });
+
   it('rejects an invalid batch', async () => {
     const tokens = await registerAndLogin('99210011');
     const auth = tokens.accessToken;

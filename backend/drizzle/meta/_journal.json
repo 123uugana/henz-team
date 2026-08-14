@@ -15,6 +15,13 @@
       "when": 1786584584729,
       "tag": "0001_dashing_demogoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786688379670,
+      "tag": "0002_past_phalanx",
+      "breakpoints": true
     }
   ]
 }

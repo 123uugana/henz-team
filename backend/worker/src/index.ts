@@ -12,6 +12,7 @@ import {
   rfidReaders,
   rfidScans,
   rfidTags,
+  rfidUnknownEpcs,
   users,
 } from './db/schema';
 
@@ -42,6 +43,7 @@ const OTP_RESEND_COOLDOWN_MS = 60_000;
 const OTP_MAX_ATTEMPTS = 5;
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const RECENT_SCANS_LIMIT = 50;
+const DUPLICATE_SCAN_WINDOW_MS = 30_000;
 
 const jsonHeaders = {
   'Access-Control-Allow-Headers': 'Authorization, Content-Type',
@@ -89,16 +91,25 @@ const pushTokenSchema = z.object({
 const registerReaderSchema = z.object({
   id: z.string().trim().min(1),
   name: z.string().trim().min(1),
+  location: z.string().trim().optional(),
+  deviceSecret: z.string().min(8).optional(),
 });
 
 const scanInputSchema = z.object({
   epc: z.string().trim().min(1),
   direction: z.enum(['ENTER', 'EXIT', 'UNKNOWN']).optional(),
   readerId: z.string().trim().optional(),
+  scannedAt: z.string().trim().optional(),
 });
 
 const ingestScansSchema = z.object({
   scans: z.array(scanInputSchema).min(1),
+});
+
+const deviceIngestScansSchema = z.object({
+  readerId: z.string().trim().min(1),
+  secret: z.string().min(1),
+  scans: z.array(scanInputSchema.omit({ readerId: true })).min(1),
 });
 
 class ApiFailure extends Error {
@@ -374,6 +385,28 @@ async function getAuthUser(request: Request, db: ReturnType<typeof drizzle>, env
 function cleanOptionalText(value?: string | null) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeEpc(epc: string) {
+  return epc.trim().toUpperCase();
+}
+
+function normalizeReaderId(readerId?: string | null) {
+  return cleanOptionalText(readerId) ?? null;
+}
+
+function scanTimestamp(value: string | undefined, fallback: number) {
+  if (!value) {
+    return new Date(fallback).toISOString();
+  }
+
+  const timestamp = new Date(value);
+
+  if (Number.isNaN(timestamp.getTime())) {
+    throw new ApiFailure(400, 'Scan timestamp буруу байна.', 'BAD_SCAN_TIMESTAMP');
+  }
+
+  return timestamp.toISOString();
 }
 
 function livestockResponse(
@@ -1076,6 +1109,8 @@ async function handleRegisterReader(
   const timestamp = now();
   const readerId = input.id.trim();
   const readerName = input.name.trim();
+  const location = cleanOptionalText(input.location);
+  const deviceSecretHash = input.deviceSecret ? await sha256(input.deviceSecret) : undefined;
 
   const existing = await db.select().from(rfidReaders).where(eq(rfidReaders.id, readerId)).get();
 
@@ -1086,28 +1121,111 @@ async function handleRegisterReader(
   if (existing) {
     await db
       .update(rfidReaders)
-      .set({ name: readerName, updatedAt: timestamp })
+      .set({
+        name: readerName,
+        location,
+        ...(deviceSecretHash ? { deviceSecretHash } : {}),
+        updatedAt: timestamp,
+      })
       .where(eq(rfidReaders.id, readerId));
   } else {
     await db.insert(rfidReaders).values({
       id: readerId,
       userId,
       name: readerName,
+      location,
+      deviceSecretHash: deviceSecretHash ?? null,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
   }
 
-  return apiResponse({ id: readerId, name: readerName });
+  return apiResponse({
+    id: readerId,
+    name: readerName,
+    ...(location ? { location } : {}),
+    ...(deviceSecretHash ? { deviceSecretSet: true } : {}),
+  });
 }
 
-async function handleIngestScans(
-  request: Request,
+async function findRecentDuplicateScan(
   db: ReturnType<typeof drizzle>,
   userId: string,
+  readerId: string | null,
+  epc: string,
+  scannedAt: string,
 ) {
-  const input = await parseJson(request, ingestScansSchema);
-  const lowerEpcs = [...new Set(input.scans.map((scan) => scan.epc.toLowerCase()))];
+  const cutoff = new Date(
+    new Date(scannedAt).getTime() - DUPLICATE_SCAN_WINDOW_MS,
+  ).toISOString();
+
+  return db
+    .select()
+    .from(rfidScans)
+    .where(
+      and(
+        eq(rfidScans.userId, userId),
+        readerId ? eq(rfidScans.readerId, readerId) : isNull(rfidScans.readerId),
+        sql`lower(${rfidScans.epc}) = ${epc.toLowerCase()}`,
+        sql`${rfidScans.scannedAt} >= ${cutoff}`,
+      ),
+    )
+    .orderBy(desc(rfidScans.scannedAt))
+    .limit(1)
+    .get();
+}
+
+async function trackUnknownEpc(
+  db: ReturnType<typeof drizzle>,
+  userId: string,
+  epc: string,
+  readerId: string | null,
+  scannedAt: string,
+) {
+  const existing = await db
+    .select()
+    .from(rfidUnknownEpcs)
+    .where(and(eq(rfidUnknownEpcs.userId, userId), eq(rfidUnknownEpcs.epc, epc)))
+    .get();
+
+  if (existing) {
+    await db
+      .update(rfidUnknownEpcs)
+      .set({
+        readerId,
+        lastSeenAt: scannedAt,
+        seenCount: existing.seenCount + 1,
+      })
+      .where(eq(rfidUnknownEpcs.id, existing.id));
+    return;
+  }
+
+  await db.insert(rfidUnknownEpcs).values({
+    id: createId('unknown_epc'),
+    userId,
+    epc,
+    readerId,
+    firstSeenAt: scannedAt,
+    lastSeenAt: scannedAt,
+    seenCount: 1,
+  });
+}
+
+async function ingestScanBatch(
+  db: ReturnType<typeof drizzle>,
+  userId: string,
+  scans: z.infer<typeof scanInputSchema>[],
+  options?: {
+    source?: 'APP' | 'DEVICE';
+    readerId?: string;
+  },
+) {
+  const normalizedScans = scans.map((scan) => ({
+    ...scan,
+    epc: normalizeEpc(scan.epc),
+    readerId: normalizeReaderId(options?.readerId ?? scan.readerId),
+  }));
+  const lowerEpcs = [...new Set(normalizedScans.map((scan) => scan.epc.toLowerCase()))];
 
   const tags = await db
     .select()
@@ -1119,21 +1237,39 @@ async function handleIngestScans(
   const baseTime = Date.now();
   let known = 0;
   let unknown = 0;
+  let inserted = 0;
+  let duplicates = 0;
   const unknownEpcs: string[] = [];
 
-  for (let i = 0; i < input.scans.length; i += 1) {
-    const scan = input.scans[i];
+  for (let i = 0; i < normalizedScans.length; i += 1) {
+    const scan = normalizedScans[i];
     const tag = tagByLowerEpc.get(scan.epc.toLowerCase());
+    const scannedAt = scanTimestamp(scan.scannedAt, baseTime + i);
+    const duplicate = await findRecentDuplicateScan(
+      db,
+      userId,
+      scan.readerId,
+      scan.epc,
+      scannedAt,
+    );
+
+    if (duplicate) {
+      duplicates += 1;
+      continue;
+    }
 
     await db.insert(rfidScans).values({
       id: createId('scan'),
       userId,
       livestockId: tag?.livestockId ?? null,
-      readerId: scan.readerId || null,
+      readerId: scan.readerId,
       epc: scan.epc,
       direction: scan.direction ?? 'UNKNOWN',
-      scannedAt: new Date(baseTime + i).toISOString(),
+      source: options?.source ?? 'APP',
+      duplicateOfScanId: null,
+      scannedAt,
     });
+    inserted += 1;
 
     if (tag) {
       known += 1;
@@ -1142,14 +1278,47 @@ async function handleIngestScans(
       if (!unknownEpcs.includes(scan.epc)) {
         unknownEpcs.push(scan.epc);
       }
+      await trackUnknownEpc(db, userId, scan.epc, scan.readerId, scannedAt);
     }
   }
 
   return apiResponse({
-    accepted: input.scans.length,
+    accepted: scans.length,
+    inserted,
+    duplicates,
     known,
     unknown,
     unknownEpcs,
+  });
+}
+
+async function handleIngestScans(
+  request: Request,
+  db: ReturnType<typeof drizzle>,
+  userId: string,
+) {
+  const input = await parseJson(request, ingestScansSchema);
+  return ingestScanBatch(db, userId, input.scans);
+}
+
+async function handleDeviceIngestScans(request: Request, db: ReturnType<typeof drizzle>) {
+  const input = await parseJson(request, deviceIngestScansSchema);
+  const readerId = input.readerId.trim();
+  const reader = await db.select().from(rfidReaders).where(eq(rfidReaders.id, readerId)).get();
+
+  if (!reader?.deviceSecretHash) {
+    throw new ApiFailure(401, 'Төхөөрөмжийн эрх буруу байна.', 'INVALID_DEVICE_SECRET');
+  }
+
+  const secretHash = await sha256(input.secret);
+
+  if (secretHash !== reader.deviceSecretHash) {
+    throw new ApiFailure(401, 'Төхөөрөмжийн эрх буруу байна.', 'INVALID_DEVICE_SECRET');
+  }
+
+  return ingestScanBatch(db, reader.userId, input.scans, {
+    source: 'DEVICE',
+    readerId,
   });
 }
 
@@ -1320,6 +1489,59 @@ async function handleDashboard(db: ReturnType<typeof drizzle>, userId: string) {
   });
 }
 
+async function handleDailyCounts(request: Request, db: ReturnType<typeof drizzle>, userId: string) {
+  const requestedDate = new URL(request.url).searchParams.get('date');
+  const date = requestedDate ?? new Date().toISOString().slice(0, 10);
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new ApiFailure(400, 'Огноо буруу байна.', 'BAD_DATE');
+  }
+
+  const [livestockRows, scans, missing] = await Promise.all([
+    db.select({ id: livestock.id }).from(livestock).where(eq(livestock.userId, userId)).all(),
+    db
+      .select()
+      .from(rfidScans)
+      .where(and(eq(rfidScans.userId, userId), like(rfidScans.scannedAt, `${date}%`)))
+      .orderBy(desc(rfidScans.scannedAt))
+      .all(),
+    db
+      .select({ value: count() })
+      .from(livestock)
+      .where(and(eq(livestock.userId, userId), eq(livestock.status, 'MISSING')))
+      .get(),
+  ]);
+
+  const scannedLivestockIds = new Set(
+    scans
+      .map((scan) => scan.livestockId)
+      .filter((livestockId): livestockId is string => Boolean(livestockId)),
+  );
+  const unknownEpcs = [...new Set(scans.filter((scan) => !scan.livestockId).map((scan) => scan.epc))];
+
+  return apiResponse({
+    date,
+    totalLivestock: livestockRows.length,
+    scannedLivestock: scannedLivestockIds.size,
+    unscannedLivestock: Math.max(livestockRows.length - scannedLivestockIds.size, 0),
+    entered: scans.filter((scan) => scan.direction === 'ENTER').length,
+    exited: scans.filter((scan) => scan.direction === 'EXIT').length,
+    unknown: unknownEpcs.length,
+    unknownEpcs,
+    missing: missing?.value ?? 0,
+    lastScan: scans[0]
+      ? {
+          id: scans[0].id,
+          epc: scans[0].epc,
+          livestockId: scans[0].livestockId,
+          readerId: scans[0].readerId,
+          direction: scans[0].direction,
+          scannedAt: scans[0].scannedAt,
+        }
+      : null,
+  });
+}
+
 async function handleAdminStatistics(db: ReturnType<typeof drizzle>) {
   const today = new Date().toISOString().slice(0, 10);
   const totalUsers = await db.select({ value: count() }).from(users).get();
@@ -1446,6 +1668,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
     return handleRefresh(request, db, env);
   }
 
+  if (request.method === 'POST' && path === '/api/devices/scans') {
+    return handleDeviceIngestScans(request, db);
+  }
+
   const user = await getAuthUser(request, db, env);
 
   if (request.method === 'GET' && path === '/api/auth/me') {
@@ -1458,6 +1684,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
 
   if (request.method === 'GET' && path === '/api/dashboard') {
     return handleDashboard(db, user.id);
+  }
+
+  if (request.method === 'GET' && path === '/api/counts/daily') {
+    return handleDailyCounts(request, db, user.id);
   }
 
   if (request.method === 'GET' && path === '/api/reports/missing') {

@@ -109,6 +109,8 @@ export const rfidReaders = sqliteTable('rfid_readers', {
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
+  location: text('location'),
+  deviceSecretHash: text('device_secret_hash'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });
@@ -130,11 +132,35 @@ export const rfidScans = sqliteTable(
     direction: text('direction', { enum: ['ENTER', 'EXIT', 'UNKNOWN'] })
       .notNull()
       .default('UNKNOWN'),
+    source: text('source', { enum: ['APP', 'DEVICE'] }).notNull().default('APP'),
+    duplicateOfScanId: text('duplicate_of_scan_id'),
     scannedAt: text('scanned_at').notNull(),
   },
   (table) => [
     index('rfid_scans_livestock_id_idx').on(table.livestockId),
+    index('rfid_scans_user_reader_epc_idx').on(table.userId, table.readerId, table.epc),
     index('rfid_scans_scanned_at_idx').on(table.scannedAt),
+  ],
+);
+
+export const rfidUnknownEpcs = sqliteTable(
+  'rfid_unknown_epcs',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    epc: text('epc').notNull(),
+    readerId: text('reader_id').references(() => rfidReaders.id, {
+      onDelete: 'set null',
+    }),
+    firstSeenAt: text('first_seen_at').notNull(),
+    lastSeenAt: text('last_seen_at').notNull(),
+    seenCount: integer('seen_count').notNull().default(1),
+  },
+  (table) => [
+    uniqueIndex('rfid_unknown_epcs_user_epc_idx').on(table.userId, table.epc),
+    index('rfid_unknown_epcs_last_seen_idx').on(table.lastSeenAt),
   ],
 );
 

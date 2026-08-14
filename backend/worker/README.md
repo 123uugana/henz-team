@@ -67,6 +67,7 @@ GET   /api/auth/me                  current user
 PATCH /api/auth/me                  update profile (name)
 
 GET   /api/dashboard                farmer dashboard summary
+GET   /api/counts/daily             daily RFID count summary (?date=YYYY-MM-DD)
 GET   /api/reports/missing          missing livestock list
 
 GET   /api/livestock                list my livestock (?search=, ?page=, ?limit=)
@@ -83,7 +84,8 @@ PATCH /api/alerts/:id/read          mark one read
 
 POST  /api/devices/push-token       register Expo push token
 POST  /api/devices/readers          register an RFID reader
-POST  /api/scans                    ingest RFID scans (batch, device-facing)
+POST  /api/devices/scans            ingest RFID scans from a reader secret
+POST  /api/scans                    ingest RFID scans from the mobile app
 GET   /api/scans                    recent scans with livestock info
 POST  /api/uploads                  upload a livestock image
 
@@ -95,11 +97,37 @@ GET   /api/admin/statistics         system-wide stats (ADMIN only)
 The system supports two reader types:
 
 - **HH100** (Android integrated reader, Impinj E710): use its HTTP POST mode to
-  send scan events straight to `POST /api/scans`.
+  send scan events straight to `POST /api/devices/scans`.
 - **HL7202K8** (Bluetooth handheld, Indy R2000): pair it with a phone/tablet app
   over Bluetooth and have the app forward reads to `POST /api/scans`.
 
-`POST /api/scans` takes an authenticated batch of scans:
+Register a reader with a stable id, location, and optional device secret:
+
+```bash
+curl -X POST $BASE/api/devices/readers -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{
+    "id":"hh100-gate-01",
+    "name":"Хашаа 1 уншигч",
+    "location":"Зүүн хаалга",
+    "deviceSecret":"device-secret-123"
+  }'
+```
+
+`POST /api/devices/scans` is for fixed readers such as HH100. It does not use a
+user bearer token; it authenticates with the reader secret:
+
+```bash
+curl -X POST $BASE/api/devices/scans -H 'Content-Type: application/json' -d '{
+  "readerId": "hh100-gate-01",
+  "secret": "device-secret-123",
+  "scans": [
+    { "epc": "E280-1160B00010100254", "direction": "ENTER" },
+    { "epc": "E280-1160B00010100277", "direction": "EXIT" }
+  ]
+}'
+```
+
+`POST /api/scans` is for the authenticated mobile app or handheld-sync flow:
 
 ```bash
 curl -X POST $BASE/api/scans -H "$AUTH" -H 'Content-Type: application/json' -d '{
@@ -116,19 +144,21 @@ curl -X POST $BASE/api/scans -H "$AUTH" -H 'Content-Type: application/json' -d '
 - EPCs are matched case-insensitively and stored uppercase.
 - Scans whose EPC is registered to the user are linked to the livestock;
   unrecognized EPCs are still stored and reported back via `unknownEpcs`.
-- `readerId` is created automatically on first use and attributed to the user.
-  A reader id registered by another user is not reassigned (the scan is stored
-  without a reader link).
-- A batch is capped at 100 scans.
-
-Register a reader explicitly to give it a display name:
-
-```bash
-curl -X POST $BASE/api/devices/readers -H "$AUTH" -H 'Content-Type: application/json' \
-  -d '{"id":"hh100-01","name":"Хашаа 1 уншигч"}'
-```
+- Duplicate scans with the same `readerId + epc` inside 30 seconds are ignored
+  and counted in the response as `duplicates`.
+- Unrecognized EPCs are tracked in `rfid_unknown_epcs` so they can be linked to
+  livestock later.
 
 Registering the same id for another user returns `409 READER_ALREADY_REGISTERED`.
+
+Daily count summary:
+
+```bash
+curl "$BASE/api/counts/daily?date=2026-08-14" -H "$AUTH"
+```
+
+The response includes total livestock, scanned livestock, unscanned livestock,
+ENTER/EXIT counts, unknown EPCs, missing count, and the last scan.
 
 ## Notes
 
@@ -153,8 +183,8 @@ npm run test:watch  # watch mode
 
 `worker/tests/api.test.ts` covers the auth flow (OTP + refresh rotation + theft
 detection), livestock CRUD (including duplicate `409`s and pagination), status
-alerts, push-token registration, RFID reader registration + scan ingestion and
-the admin guard.
+alerts, push-token registration, RFID reader registration, device-secret scan
+ingestion, duplicate filtering, daily count summaries and the admin guard.
 
 ## Manual smoke test
 
