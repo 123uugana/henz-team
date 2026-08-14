@@ -66,7 +66,7 @@ POST  /api/auth/refresh             rotate refresh token
 GET   /api/auth/me                  current user
 PATCH /api/auth/me                  update profile (name)
 
-GET   /api/dashboard                farmer dashboard summary
+GET   /api/dashboard                farmer dashboard summary with RFID overview
 GET   /api/counts/daily             daily RFID count summary (?date=YYYY-MM-DD)
 GET   /api/reports/missing          missing livestock list
 
@@ -159,6 +159,13 @@ curl "$BASE/api/counts/daily?date=2026-08-14" -H "$AUTH"
 
 The response includes total livestock, scanned livestock, unscanned livestock,
 ENTER/EXIT counts, unknown EPCs, missing count, and the last scan.
+
+The main dashboard endpoint also includes today's scan summary, active reader
+status, recent scans, and unknown EPCs:
+
+```bash
+curl "$BASE/api/dashboard" -H "$AUTH"
+```
 
 ## Notes
 

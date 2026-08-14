@@ -1436,55 +1436,142 @@ async function handleMissingLivestock(db: ReturnType<typeof drizzle>, userId: st
 
 async function handleDashboard(db: ReturnType<typeof drizzle>, userId: string) {
   const today = new Date().toISOString().slice(0, 10);
-  const total = await db
-    .select({ value: count() })
-    .from(livestock)
-    .where(eq(livestock.userId, userId))
-    .get();
-  const missing = await db
-    .select({ value: count() })
-    .from(livestock)
-    .where(and(eq(livestock.userId, userId), eq(livestock.status, 'MISSING')))
-    .get();
-  const unknownTags = await db
-    .select({ value: count() })
-    .from(livestock)
-    .leftJoin(rfidTags, eq(rfidTags.livestockId, livestock.id))
-    .where(and(eq(livestock.userId, userId), isNull(rfidTags.id)))
-    .get();
-  const scannedToday = await db
-    .select({ value: count() })
-    .from(rfidScans)
-    .where(and(eq(rfidScans.userId, userId), like(rfidScans.scannedAt, `${today}%`)))
-    .get();
-  const recentScans = await db
-    .select({
-      id: rfidScans.id,
-      scannedAt: rfidScans.scannedAt,
-      livestockId: livestock.id,
-      earNumber: livestock.earNumber,
-      name: livestock.name,
-    })
-    .from(rfidScans)
-    .innerJoin(livestock, eq(livestock.id, rfidScans.livestockId))
-    .where(eq(rfidScans.userId, userId))
-    .orderBy(desc(rfidScans.scannedAt))
-    .limit(4)
-    .all();
+  const [
+    total,
+    missing,
+    untagged,
+    scansToday,
+    recentScans,
+    readers,
+  ] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(livestock)
+      .where(eq(livestock.userId, userId))
+      .get(),
+    db
+      .select({ value: count() })
+      .from(livestock)
+      .where(and(eq(livestock.userId, userId), eq(livestock.status, 'MISSING')))
+      .get(),
+    db
+      .select({ value: count() })
+      .from(livestock)
+      .leftJoin(rfidTags, eq(rfidTags.livestockId, livestock.id))
+      .where(and(eq(livestock.userId, userId), isNull(rfidTags.id)))
+      .get(),
+    db
+      .select()
+      .from(rfidScans)
+      .where(and(eq(rfidScans.userId, userId), like(rfidScans.scannedAt, `${today}%`)))
+      .orderBy(desc(rfidScans.scannedAt))
+      .all(),
+    db
+      .select({
+        id: rfidScans.id,
+        scannedAt: rfidScans.scannedAt,
+        readerId: rfidScans.readerId,
+        epc: rfidScans.epc,
+        direction: rfidScans.direction,
+        source: rfidScans.source,
+        livestockId: rfidScans.livestockId,
+        earNumber: livestock.earNumber,
+        name: livestock.name,
+      })
+      .from(rfidScans)
+      .leftJoin(livestock, eq(livestock.id, rfidScans.livestockId))
+      .where(eq(rfidScans.userId, userId))
+      .orderBy(desc(rfidScans.scannedAt))
+      .limit(6)
+      .all(),
+    db
+      .select()
+      .from(rfidReaders)
+      .where(eq(rfidReaders.userId, userId))
+      .orderBy(rfidReaders.name)
+      .all(),
+  ]);
+
+  const totalLivestock = total?.value ?? 0;
+  const scannedLivestockIds = new Set(
+    scansToday
+      .map((scan) => scan.livestockId)
+      .filter((livestockId): livestockId is string => Boolean(livestockId)),
+  );
+  const unknownEpcsToday = [
+    ...new Set(scansToday.filter((scan) => !scan.livestockId).map((scan) => scan.epc)),
+  ];
+
+  const readersWithStatus = await Promise.all(
+    readers.map(async (reader) => {
+      const lastScan = await db
+        .select({
+          scannedAt: rfidScans.scannedAt,
+          direction: rfidScans.direction,
+          epc: rfidScans.epc,
+        })
+        .from(rfidScans)
+        .where(and(eq(rfidScans.userId, userId), eq(rfidScans.readerId, reader.id)))
+        .orderBy(desc(rfidScans.scannedAt))
+        .limit(1)
+        .get();
+
+      return {
+        id: reader.id,
+        name: reader.name,
+        location: reader.location ?? undefined,
+        deviceSecretSet: Boolean(reader.deviceSecretHash),
+        lastScanAt: lastScan?.scannedAt,
+        lastDirection: lastScan?.direction,
+        lastEpc: lastScan?.epc,
+        isActiveToday: Boolean(lastScan?.scannedAt.startsWith(today)),
+      };
+    }),
+  );
 
   return apiResponse({
-    totalLivestock: total?.value ?? 0,
-    scannedToday: scannedToday?.value ?? 0,
+    totalLivestock,
+    scannedToday: scansToday.length,
     missingCount: missing?.value ?? 0,
-    unknownTagCount: unknownTags?.value ?? 0,
+    unknownTagCount: untagged?.value ?? 0,
+    readerCount: readers.length,
+    activeReaderCount: readersWithStatus.filter((reader) => reader.isActiveToday).length,
+    today: {
+      date: today,
+      totalScans: scansToday.length,
+      scannedLivestock: scannedLivestockIds.size,
+      unscannedLivestock: Math.max(totalLivestock - scannedLivestockIds.size, 0),
+      entered: scansToday.filter((scan) => scan.direction === 'ENTER').length,
+      exited: scansToday.filter((scan) => scan.direction === 'EXIT').length,
+      unknown: unknownEpcsToday.length,
+      unknownEpcs: unknownEpcsToday,
+      lastScan: scansToday[0]
+        ? {
+            id: scansToday[0].id,
+            epc: scansToday[0].epc,
+            livestockId: scansToday[0].livestockId,
+            readerId: scansToday[0].readerId,
+            direction: scansToday[0].direction,
+            source: scansToday[0].source,
+            scannedAt: scansToday[0].scannedAt,
+          }
+        : null,
+    },
+    readers: readersWithStatus,
     recentScans: recentScans.map((scan) => ({
       id: scan.id,
+      epc: scan.epc,
+      readerId: scan.readerId,
+      direction: scan.direction,
+      source: scan.source,
       scannedAt: scan.scannedAt,
-      livestock: {
-        id: scan.livestockId,
-        earNumber: scan.earNumber,
-        name: scan.name ?? undefined,
-      },
+      livestock: scan.livestockId
+        ? {
+            id: scan.livestockId,
+            earNumber: scan.earNumber,
+            name: scan.name ?? undefined,
+          }
+        : null,
     })),
   });
 }

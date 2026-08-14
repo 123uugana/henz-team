@@ -363,6 +363,7 @@ describe('rfid device integration', () => {
     const tokens = await registerAndLogin('99256677');
     const auth = tokens.accessToken;
     const readerId = 'hh100-gate-summary';
+    const countDate = new Date().toISOString().slice(0, 10);
 
     const reader = await api(
       '/api/devices/readers',
@@ -408,12 +409,12 @@ describe('rfid device integration', () => {
         readerId,
         secret: 'device-secret-123',
         scans: [
-          { epc: 'e280-summary-1', direction: 'ENTER', scannedAt: '2026-08-14T00:00:00.000Z' },
-          { epc: 'E280-SUMMARY-1', direction: 'EXIT', scannedAt: '2026-08-14T00:00:10.000Z' },
+          { epc: 'e280-summary-1', direction: 'ENTER', scannedAt: `${countDate}T00:00:00.000Z` },
+          { epc: 'E280-SUMMARY-1', direction: 'EXIT', scannedAt: `${countDate}T00:00:10.000Z` },
           {
             epc: 'E280-SUMMARY-UNKNOWN',
             direction: 'EXIT',
-            scannedAt: '2026-08-14T00:01:00.000Z',
+            scannedAt: `${countDate}T00:01:00.000Z`,
           },
         ],
       }),
@@ -428,10 +429,10 @@ describe('rfid device integration', () => {
       unknownEpcs: ['E280-SUMMARY-UNKNOWN'],
     });
 
-    const summary = await api('/api/counts/daily?date=2026-08-14', authorized(auth));
+    const summary = await api(`/api/counts/daily?date=${countDate}`, authorized(auth));
     expect(summary.status).toBe(200);
     expect(summary.body.data).toMatchObject({
-      date: '2026-08-14',
+      date: countDate,
       totalLivestock: 2,
       scannedLivestock: 1,
       unscannedLivestock: 1,
@@ -444,6 +445,44 @@ describe('rfid device integration', () => {
       epc: 'E280-SUMMARY-UNKNOWN',
       readerId,
       direction: 'EXIT',
+    });
+
+    const dashboard = await api('/api/dashboard', authorized(auth));
+    expect(dashboard.status).toBe(200);
+    expect(dashboard.body.data).toMatchObject({
+      totalLivestock: 2,
+      scannedToday: 2,
+      readerCount: 1,
+      activeReaderCount: 1,
+      today: {
+        date: countDate,
+        totalScans: 2,
+        scannedLivestock: 1,
+        unscannedLivestock: 1,
+        entered: 1,
+        exited: 1,
+        unknown: 1,
+        unknownEpcs: ['E280-SUMMARY-UNKNOWN'],
+      },
+      readers: [
+        {
+          id: readerId,
+          name: 'Зүүн хаалга',
+          location: 'Зүүн хашаа',
+          deviceSecretSet: true,
+          isActiveToday: true,
+        },
+      ],
+    });
+    expect(dashboard.body.data.today.lastScan).toMatchObject({
+      epc: 'E280-SUMMARY-UNKNOWN',
+      readerId,
+      direction: 'EXIT',
+      source: 'DEVICE',
+    });
+    expect(dashboard.body.data.recentScans[0]).toMatchObject({
+      epc: 'E280-SUMMARY-UNKNOWN',
+      livestock: null,
     });
   });
 
