@@ -9,6 +9,9 @@
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:push": "drizzle-kit push --config drizzle.config.ts",
     "db:migrate": "wrangler d1 migrations apply hents-hurag --remote --config wrangler.toml",
+    "db:migrate:local": "wrangler d1 migrations apply hents-hurag --local --config wrangler.toml",
+    "db:seed:local": "wrangler d1 execute hents-hurag --local --file=seed/demo.sql --config wrangler.toml",
+    "db:seed:remote": "wrangler d1 execute hents-hurag --remote --file=seed/demo.sql --config wrangler.toml",
     "test": "vitest run",
     "test:watch": "vitest"
   },

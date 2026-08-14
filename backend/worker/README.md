@@ -247,6 +247,56 @@ Apply migrations to the remote D1 database:
 npx wrangler d1 migrations apply hents-hurag --remote --config wrangler.toml
 ```
 
+Apply migrations locally:
+
+```bash
+npm run db:migrate:local
+```
+
+## Cloudflare D1 Studio demo data
+
+To make the Cloudflare D1 Studio tables useful while testing, load demo livestock,
+RFID tags, readers, scans, unknown EPCs, and alerts:
+
+```bash
+npm run db:migrate:local
+npm run db:seed:local
+```
+
+For the remote Cloudflare D1 database, apply migrations first, then seed:
+
+```bash
+npm run db:migrate
+npm run db:seed:remote
+```
+
+The demo reader id and secret are:
+
+```text
+readerId: hh100-gate-01
+secret: device-secret-123
+```
+
+Useful D1 Studio queries:
+
+```sql
+SELECT status, COUNT(*) AS total
+FROM livestock
+WHERE user_id = 'user_demo_1'
+GROUP BY status;
+
+SELECT direction, COUNT(*) AS total
+FROM rfid_scans
+WHERE user_id = 'user_demo_1'
+  AND scanned_at LIKE date('now') || '%'
+GROUP BY direction;
+
+SELECT epc, reader_id, seen_count, last_seen_at
+FROM rfid_unknown_epcs
+WHERE user_id = 'user_demo_1'
+ORDER BY last_seen_at DESC;
+```
+
 ## Run
 
 ```bash
