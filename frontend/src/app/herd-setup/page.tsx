@@ -31,7 +31,7 @@ export default function HerdSetupIntroPage() {
           variant="brand"
           size="xl"
           className="w-full"
-          render={<Link href="/herd-setup" />}
+          render={<Link href="/animals/new" />}
         >
           <Plus />
           Мал нэмэх
@@ -39,7 +39,7 @@ export default function HerdSetupIntroPage() {
         <Button
           variant="link"
           className="h-auto p-0 text-sm text-[#f2a93c]/90"
-          render={<Link href="/" />}
+          render={<Link href="/dashboard" />}
         >
           Нүүр хуудасруу шилжих
         </Button>
