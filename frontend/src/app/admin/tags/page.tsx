@@ -8,7 +8,9 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getTagPrefixInfo } from "@/lib/tag-prefix";
-import { unlockTag, useTags, type TagStatus } from "@/lib/store";
+import { listAdminTags, unlockTag, type TagStatus } from "@/lib/api";
+import { useApi } from "@/lib/use-api";
+import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
 const STATUS_LABEL: Record<TagStatus, string> = {
@@ -34,16 +36,17 @@ const FILTERS: { value: TagStatus | "ALL"; label: string }[] = [
 ];
 
 export default function AdminTagsPage() {
-  const [tags, refresh] = useTags();
+  useAuthGuard();
+  const { data: tags, loading, error, refresh } = useApi(listAdminTags, "");
   const [filter, setFilter] = useState<TagStatus | "ALL">("ALL");
 
   const filtered = useMemo(
-    () => (filter === "ALL" ? tags : tags.filter((t) => t.status === filter)),
+    () => (filter === "ALL" ? (tags ?? []) : (tags ?? []).filter((t) => t.status === filter)),
     [tags, filter]
   );
 
-  const handleUnlock = (epc: string) => {
-    unlockTag(epc);
+  const handleUnlock = async (epc: string) => {
+    await unlockTag(epc);
     refresh();
   };
 
@@ -69,55 +72,55 @@ export default function AdminTagsPage() {
         ))}
       </div>
 
-      <div className="mt-4 flex flex-col gap-2">
-        {filtered.map((tag) => {
-          const info = getTagPrefixInfo(tag.epc);
-          return (
-            <Card
-              key={tag.epc}
-              className="gap-3 bg-[#141a2c] p-3 ring-1 ring-white/5"
-            >
-              <div className="flex items-center gap-3">
-                <span className={`flex size-10 shrink-0 items-center justify-center rounded-full ${info.bgClass}`}>
-                  {tag.status === "LOCKED" ? (
-                    <Lock className={`size-4 ${info.textClass}`} />
-                  ) : (
-                    <Unlock className={`size-4 ${info.textClass}`} />
-                  )}
-                </span>
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <p className="text-sm font-semibold">{tag.epc}</p>
-                  <p className="truncate text-xs text-gray-500">
-                    {info.label}
-                    {tag.claimedBy ? ` · ${tag.claimedBy}` : ""}
-                  </p>
+      {loading ? (
+        <p className="mt-10 text-center text-sm text-gray-500">Ачаалж байна...</p>
+      ) : error ? (
+        <p className="mt-10 text-center text-sm text-red-400">{error}</p>
+      ) : (
+        <div className="mt-4 flex flex-col gap-2">
+          {filtered.map((tag) => {
+            const info = getTagPrefixInfo(tag.epc);
+            return (
+              <Card key={tag.epc} className="gap-3 bg-[#141a2c] p-3 ring-1 ring-white/5">
+                <div className="flex items-center gap-3">
+                  <span className={`flex size-10 shrink-0 items-center justify-center rounded-full ${info.bgClass}`}>
+                    {tag.status === "LOCKED" ? (
+                      <Lock className={`size-4 ${info.textClass}`} />
+                    ) : (
+                      <Unlock className={`size-4 ${info.textClass}`} />
+                    )}
+                  </span>
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <p className="text-sm font-semibold">{tag.epc}</p>
+                    <p className="truncate text-xs text-gray-500">{info.label}</p>
+                  </div>
+                  <Badge className={STATUS_TONE[tag.status]}>
+                    {STATUS_LABEL[tag.status]}
+                  </Badge>
                 </div>
-                <Badge className={STATUS_TONE[tag.status]}>
-                  {STATUS_LABEL[tag.status]}
-                </Badge>
-              </div>
 
-              {tag.status === "LOCKED" || tag.status === "CLAIMED" ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleUnlock(tag.epc)}
-                  className="w-full border-white/10 bg-transparent text-white hover:bg-white/5"
-                >
-                  <Unlock className="size-3.5" />
-                  Тайлах
-                </Button>
-              ) : null}
-            </Card>
-          );
-        })}
+                {tag.status === "LOCKED" || tag.status === "CLAIMED" ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleUnlock(tag.epc)}
+                    className="w-full border-white/10 bg-transparent text-white hover:bg-white/5"
+                  >
+                    <Unlock className="size-3.5" />
+                    Тайлах
+                  </Button>
+                ) : null}
+              </Card>
+            );
+          })}
 
-        {filtered.length === 0 ? (
-          <p className="mt-6 text-center text-sm text-gray-500">
-            Энэ төлөвт шошго алга.
-          </p>
-        ) : null}
-      </div>
+          {filtered.length === 0 ? (
+            <p className="mt-6 text-center text-sm text-gray-500">
+              Энэ төлөвт шошго алга.
+            </p>
+          ) : null}
+        </div>
+      )}
     </PhoneFrame>
   );
 }

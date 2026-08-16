@@ -229,6 +229,27 @@ describe('livestock CRUD', () => {
     expect(res.body.data.page).toBe(1);
     expect(res.body.data.totalPages).toBe(2);
   });
+
+  it('filters by status, species and gender', async () => {
+    const tokens = await registerAndLogin('99113344');
+    const auth = tokens.accessToken;
+
+    await api('/api/livestock', json('POST', { earNumber: 'F-1', species: 'SHEEP', gender: 'FEMALE' }, auth));
+    const goat = await api('/api/livestock', json('POST', { earNumber: 'F-2', species: 'GOAT', gender: 'MALE' }, auth));
+    await api(`/api/livestock/${goat.body.data.id}/status`, json('PATCH', { status: 'MISSING' }, auth));
+
+    const bySpecies = await api('/api/livestock?species=GOAT&page=1&limit=10', authorized(auth));
+    expect(bySpecies.body.data.items).toHaveLength(1);
+    expect(bySpecies.body.data.items[0].earNumber).toBe('F-2');
+
+    const byStatus = await api('/api/livestock?status=MISSING&page=1&limit=10', authorized(auth));
+    expect(byStatus.body.data.items).toHaveLength(1);
+    expect(byStatus.body.data.items[0].earNumber).toBe('F-2');
+
+    const byGender = await api('/api/livestock?gender=FEMALE&page=1&limit=10', authorized(auth));
+    expect(byGender.body.data.items).toHaveLength(1);
+    expect(byGender.body.data.items[0].earNumber).toBe('F-1');
+  });
 });
 
 describe('status alerts', () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { LayoutGrid, List, PawPrint, Rabbit, Search } from "lucide-react";
 import { PhoneFrame } from "@/components/phone-frame";
 import { AppHeader } from "@/components/app-header";
@@ -17,21 +17,29 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getTagPrefixInfo } from "@/lib/tag-prefix";
-import { useAnimals, type Animal, type AnimalStatus, type Gender } from "@/lib/store";
+import {
+  listLivestock,
+  type Gender,
+  type Livestock,
+  type LivestockStatus,
+  type Species,
+} from "@/lib/api";
+import { useApi } from "@/lib/use-api";
+import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 4;
 
-const STATUS_LABEL: Record<AnimalStatus, string> = {
+const STATUS_LABEL: Record<LivestockStatus, string> = {
   ACTIVE: "Идэвхтэй",
   MISSING: "Алга",
-  SOLD: "Зарагдсан",
+  INACTIVE: "Зарагдсан",
 };
 
-const STATUS_TONE: Record<AnimalStatus, string> = {
+const STATUS_TONE: Record<LivestockStatus, string> = {
   ACTIVE: "bg-emerald-400/15 text-emerald-400",
   MISSING: "bg-red-500/15 text-red-400",
-  SOLD: "bg-white/10 text-gray-300",
+  INACTIVE: "bg-white/10 text-gray-300",
 };
 
 const GENDER_LABEL: Record<Gender, string> = {
@@ -40,24 +48,24 @@ const GENDER_LABEL: Record<Gender, string> = {
   UNKNOWN: "Тодорхойгүй",
 };
 
-const STATUS_FILTER_LABEL: Record<AnimalStatus | "ALL", string> = {
-  ALL: "Бүх статус",
-  ACTIVE: "Идэвхтэй",
-  MISSING: "Алга",
-  SOLD: "Зарагдсан",
+const SPECIES_LABEL: Record<Species, string> = {
+  SHEEP: "Хонь",
+  GOAT: "Ямаа",
 };
 
-const SPECIES_FILTER_LABEL: Record<Animal["species"] | "ALL", string> = {
+const STATUS_FILTER_LABEL: Record<LivestockStatus | "ALL", string> = {
+  ALL: "Бүх статус",
+  ...STATUS_LABEL,
+};
+
+const SPECIES_FILTER_LABEL: Record<Species | "ALL", string> = {
   ALL: "Бүх төрөл",
-  Хонь: "Хонь",
-  Ямаа: "Ямаа",
+  ...SPECIES_LABEL,
 };
 
 const GENDER_FILTER_LABEL: Record<Gender | "ALL", string> = {
   ALL: "Бүх хүйс",
-  MALE: "Эр",
-  FEMALE: "Эм",
-  UNKNOWN: "Тодорхойгүй",
+  ...GENDER_LABEL,
 };
 
 function animalAge(birthYear?: number) {
@@ -66,37 +74,35 @@ function animalAge(birthYear?: number) {
 }
 
 export default function AnimalListPage() {
-  const [animals] = useAnimals();
+  useAuthGuard();
+
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<AnimalStatus | "ALL">("ALL");
-  const [speciesFilter, setSpeciesFilter] = useState<Animal["species"] | "ALL">("ALL");
+  const [statusFilter, setStatusFilter] = useState<LivestockStatus | "ALL">("ALL");
+  const [speciesFilter, setSpeciesFilter] = useState<Species | "ALL">("ALL");
   const [genderFilter, setGenderFilter] = useState<Gender | "ALL">("ALL");
   const [view, setView] = useState<"list" | "grid">("list");
   const [page, setPage] = useState(1);
 
-  const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase();
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchInput);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
-    return animals.filter((animal) => {
-      if (statusFilter !== "ALL" && animal.status !== statusFilter) return false;
-      if (speciesFilter !== "ALL" && animal.species !== speciesFilter) return false;
-      if (genderFilter !== "ALL" && animal.gender !== genderFilter) return false;
-      if (
-        query &&
-        !animal.name.toLowerCase().includes(query) &&
-        !animal.tagEpc.toLowerCase().includes(query)
-      ) {
-        return false;
-      }
-      return true;
-    });
-  }, [animals, search, statusFilter, speciesFilter, genderFilter]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  const pageItems = filtered.slice(
-    (currentPage - 1) * PAGE_SIZE,
-    currentPage * PAGE_SIZE
+  const { data, loading, error } = useApi(
+    () =>
+      listLivestock({
+        search: search || undefined,
+        status: statusFilter === "ALL" ? undefined : statusFilter,
+        species: speciesFilter === "ALL" ? undefined : speciesFilter,
+        gender: genderFilter === "ALL" ? undefined : genderFilter,
+        page,
+        limit: PAGE_SIZE,
+      }),
+    `${search}|${statusFilter}|${speciesFilter}|${genderFilter}|${page}`
   );
 
   const resetToFirstPage = () => setPage(1);
@@ -109,11 +115,8 @@ export default function AnimalListPage() {
         <div className="relative">
           <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-gray-500" />
           <Input
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              resetToFirstPage();
-            }}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Нэр, дугаараар хайх..."
             className="h-11 border-white/10 bg-[#161c2c] pl-10 py-0 text-sm text-white placeholder:text-gray-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
           />
@@ -123,39 +126,39 @@ export default function AnimalListPage() {
           <Select
             value={statusFilter}
             onValueChange={(value) => {
-              setStatusFilter(value as AnimalStatus | "ALL");
+              setStatusFilter(value as LivestockStatus | "ALL");
               resetToFirstPage();
             }}
           >
             <SelectTrigger className="h-9 w-full border border-white/10 bg-[#161c2c] text-xs text-gray-300">
               <SelectValue>
-                {(value: AnimalStatus | "ALL") => STATUS_FILTER_LABEL[value]}
+                {(value: LivestockStatus | "ALL") => STATUS_FILTER_LABEL[value]}
               </SelectValue>
             </SelectTrigger>
             <SelectContent className="bg-[#161c2c] text-white ring-white/10">
               <SelectItem value="ALL">Бүх статус</SelectItem>
               <SelectItem value="ACTIVE">Идэвхтэй</SelectItem>
               <SelectItem value="MISSING">Алга</SelectItem>
-              <SelectItem value="SOLD">Зарагдсан</SelectItem>
+              <SelectItem value="INACTIVE">Зарагдсан</SelectItem>
             </SelectContent>
           </Select>
 
           <Select
             value={speciesFilter}
             onValueChange={(value) => {
-              setSpeciesFilter(value as Animal["species"] | "ALL");
+              setSpeciesFilter(value as Species | "ALL");
               resetToFirstPage();
             }}
           >
             <SelectTrigger className="h-9 w-full border border-white/10 bg-[#161c2c] text-xs text-gray-300">
               <SelectValue>
-                {(value: Animal["species"] | "ALL") => SPECIES_FILTER_LABEL[value]}
+                {(value: Species | "ALL") => SPECIES_FILTER_LABEL[value]}
               </SelectValue>
             </SelectTrigger>
             <SelectContent className="bg-[#161c2c] text-white ring-white/10">
               <SelectItem value="ALL">Бүх төрөл</SelectItem>
-              <SelectItem value="Хонь">Хонь</SelectItem>
-              <SelectItem value="Ямаа">Ямаа</SelectItem>
+              <SelectItem value="SHEEP">Хонь</SelectItem>
+              <SelectItem value="GOAT">Ямаа</SelectItem>
             </SelectContent>
           </Select>
 
@@ -180,7 +183,9 @@ export default function AnimalListPage() {
         </div>
 
         <div className="flex items-center justify-between">
-          <p className="text-xs text-gray-400">{filtered.length} мал олдлоо</p>
+          <p className="text-xs text-gray-400">
+            {loading ? "Ачаалж байна..." : `${data?.total ?? 0} мал олдлоо`}
+          </p>
           <div className="flex items-center gap-1 rounded-xl bg-[#161c2c] p-1">
             <button
               type="button"
@@ -208,43 +213,45 @@ export default function AnimalListPage() {
         </div>
       </div>
 
-      {view === "list" ? (
+      {error ? (
+        <p className="mt-8 text-center text-sm text-red-400">{error}</p>
+      ) : view === "list" ? (
         <div className="mt-3 flex flex-col gap-2">
-          {pageItems.map((animal) => (
+          {(data?.items ?? []).map((animal) => (
             <AnimalListRow key={animal.id} animal={animal} />
           ))}
         </div>
       ) : (
         <div className="mt-3 grid grid-cols-2 gap-3">
-          {pageItems.map((animal) => (
+          {(data?.items ?? []).map((animal) => (
             <AnimalGridCard key={animal.id} animal={animal} />
           ))}
         </div>
       )}
 
-      {pageItems.length === 0 ? (
+      {!loading && !error && data?.items.length === 0 ? (
         <p className="mt-8 text-center text-sm text-gray-500">
           Тохирох мал олдсонгүй.
         </p>
       ) : null}
 
-      {totalPages > 1 ? (
+      {data && data.totalPages > 1 ? (
         <div className="mt-4 flex items-center justify-center gap-4">
           <button
             type="button"
-            disabled={currentPage <= 1}
+            disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             className="text-sm text-gray-400 disabled:opacity-30"
           >
             ← Өмнөх
           </button>
           <span className="text-xs text-gray-500">
-            {currentPage} / {totalPages}
+            {data.page} / {data.totalPages}
           </span>
           <button
             type="button"
-            disabled={currentPage >= totalPages}
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page >= data.totalPages}
+            onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))}
             className="text-sm text-gray-400 disabled:opacity-30"
           >
             Дараах →
@@ -257,16 +264,16 @@ export default function AnimalListPage() {
   );
 }
 
-function SpeciesIcon({ species, className }: { species: Animal["species"]; className?: string }) {
-  return species === "Хонь" ? (
+function SpeciesIcon({ species, className }: { species: Species; className?: string }) {
+  return species === "SHEEP" ? (
     <PawPrint className={className} strokeWidth={1.5} />
   ) : (
     <Rabbit className={className} strokeWidth={1.5} />
   );
 }
 
-function AnimalListRow({ animal }: { animal: Animal }) {
-  const tagInfo = getTagPrefixInfo(animal.tagEpc);
+function AnimalListRow({ animal }: { animal: Livestock }) {
+  const tagInfo = animal.rfidTag ? getTagPrefixInfo(animal.rfidTag.epc) : null;
   const age = animalAge(animal.birthYear);
 
   return (
@@ -277,13 +284,17 @@ function AnimalListRow({ animal }: { animal: Animal }) {
         </span>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex items-center gap-1.5">
-            <p className="truncate text-sm font-semibold">{animal.name}</p>
-            <Badge className={cn("shrink-0 px-1.5", tagInfo.bgClass, tagInfo.textClass)}>
-              {animal.tagEpc}
-            </Badge>
+            <p className="truncate text-sm font-semibold">
+              {animal.name || animal.earNumber}
+            </p>
+            {tagInfo ? (
+              <Badge className={cn("shrink-0 px-1.5", tagInfo.bgClass, tagInfo.textClass)}>
+                {animal.rfidTag!.epc}
+              </Badge>
+            ) : null}
           </div>
           <p className="truncate text-xs text-gray-500">
-            {animal.species} · {GENDER_LABEL[animal.gender]}
+            {SPECIES_LABEL[animal.species]} · {GENDER_LABEL[animal.gender]}
             {age !== null ? ` · ${age} нас` : ""}
           </p>
         </div>
@@ -295,7 +306,7 @@ function AnimalListRow({ animal }: { animal: Animal }) {
   );
 }
 
-function AnimalGridCard({ animal }: { animal: Animal }) {
+function AnimalGridCard({ animal }: { animal: Livestock }) {
   const age = animalAge(animal.birthYear);
 
   return (
@@ -310,8 +321,12 @@ function AnimalGridCard({ animal }: { animal: Animal }) {
           </Badge>
         </div>
         <div className="flex flex-col">
-          <p className="truncate text-sm font-semibold">{animal.name}</p>
-          <p className="truncate text-xs text-gray-500">{animal.tagEpc}</p>
+          <p className="truncate text-sm font-semibold">
+            {animal.name || animal.earNumber}
+          </p>
+          <p className="truncate text-xs text-gray-500">
+            {animal.rfidTag?.epc ?? animal.earNumber}
+          </p>
           <p className="truncate text-xs text-gray-500">
             {GENDER_LABEL[animal.gender]}
             {age !== null ? ` · ${age} нас` : ""}

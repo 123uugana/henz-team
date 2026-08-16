@@ -863,23 +863,41 @@ async function handleUpdateMe(request: Request, db: ReturnType<typeof drizzle>, 
 async function handleListLivestock(request: Request, db: ReturnType<typeof drizzle>, userId: string) {
   const url = new URL(request.url);
   const search = url.searchParams.get('search')?.trim();
+  const statusParam = url.searchParams.get('status');
+  const speciesParam = url.searchParams.get('species');
+  const genderParam = url.searchParams.get('gender');
   const pageParam = url.searchParams.get('page');
   const limitParam = url.searchParams.get('limit');
   const paginated = pageParam !== null || limitParam !== null;
   const page = Math.max(1, Number(pageParam) || 1);
   const limit = Math.min(100, Math.max(1, Number(limitParam) || 20));
 
-  const conditions = search
-    ? and(
-        eq(livestock.userId, userId),
-        or(
-          like(livestock.earNumber, `%${search}%`),
-          like(livestock.name, `%${search}%`),
-          like(livestock.color, `%${search}%`),
-          like(rfidTags.epc, `%${search}%`),
-        ),
-      )
-    : eq(livestock.userId, userId);
+  const filters = [eq(livestock.userId, userId)];
+
+  if (search) {
+    filters.push(
+      or(
+        like(livestock.earNumber, `%${search}%`),
+        like(livestock.name, `%${search}%`),
+        like(livestock.color, `%${search}%`),
+        like(rfidTags.epc, `%${search}%`),
+      )!,
+    );
+  }
+
+  if (statusParam && ['ACTIVE', 'MISSING', 'INACTIVE'].includes(statusParam)) {
+    filters.push(eq(livestock.status, statusParam as 'ACTIVE' | 'MISSING' | 'INACTIVE'));
+  }
+
+  if (speciesParam && ['SHEEP', 'GOAT'].includes(speciesParam)) {
+    filters.push(eq(livestock.species, speciesParam as 'SHEEP' | 'GOAT'));
+  }
+
+  if (genderParam && ['MALE', 'FEMALE', 'UNKNOWN'].includes(genderParam)) {
+    filters.push(eq(livestock.gender, genderParam as 'MALE' | 'FEMALE' | 'UNKNOWN'));
+  }
+
+  const conditions = and(...filters);
 
   const totalRow = await db
     .select({ value: count() })

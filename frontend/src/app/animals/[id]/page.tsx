@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Camera,
   DoorOpen,
@@ -23,14 +23,21 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { getTagPrefixInfo } from "@/lib/tag-prefix";
 import {
+  ApiError,
+  getLivestock,
+  getLivestockScans,
   getTag,
-  updateAnimalImage,
-  updateAnimalLocation,
-  updateAnimalStatus,
-  useAnimal,
-  useNotifications,
+  listAlerts,
+  updateLivestock,
+  updateLivestockLocation,
+  updateLivestockStatus,
+  uploadImage,
+  type Alert,
+  type TagRegistryEntry,
   type TagStatus,
-} from "@/lib/store";
+} from "@/lib/api";
+import { useApi } from "@/lib/use-api";
+import { useAuthGuard } from "@/lib/use-auth-guard";
 
 const TAG_STATUS_LABEL: Record<TagStatus, string> = {
   AVAILABLE: "Чөлөөтэй",
@@ -48,50 +55,95 @@ const TAG_STATUS_TONE: Record<TagStatus, string> = {
 
 export default function AnimalDetailPage() {
   const params = useParams<{ id: string }>();
-  const id = params.id;
-  const [animal, refreshAnimal] = useAnimal(id);
-  const [notifications] = useNotifications();
+  // Remount whenever the route's :id changes, so no per-animal local state
+  // (tag lookup, GPS status, upload state) can leak from one animal to another.
+  return <AnimalDetailContent key={params.id} id={params.id} />;
+}
+
+function AnimalDetailContent({ id }: { id: string }) {
+  useAuthGuard();
+
+  const { data: animal, error, refresh } = useApi(() => getLivestock(id), id);
+  const { data: scans } = useApi(() => getLivestockScans(id), id);
+  const { data: alerts } = useApi(() => listAlerts(), "");
+
+  const [tag, setTag] = useState<TagRegistryEntry | null>(null);
+  useEffect(() => {
+    if (!animal?.rfidTag) return;
+    const epc = animal.rfidTag.epc;
+    let cancelled = false;
+
+    getTag(epc)
+      .then((result) => {
+        if (!cancelled) setTag(result);
+      })
+      .catch(() => {
+        if (!cancelled) setTag(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [animal?.rfidTag]);
+
   const [locating, setLocating] = useState(false);
   const [locateError, setLocateError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const tag = useMemo(() => (animal ? getTag(animal.tagEpc) : undefined), [animal]);
-  const relatedNotifications = useMemo(
-    () =>
-      animal
-        ? notifications.filter((n) => n.meta?.tag === animal.tagEpc)
-        : [],
-    [animal, notifications]
+  const relatedAlerts = useMemo(
+    () => (alerts ?? []).filter((a: Alert) => a.livestockId === id),
+    [alerts, id]
   );
+
+  if (error) {
+    return (
+      <PhoneFrame>
+        <AppHeader backHref="/animals" title="Дэлгэрэнгүй" />
+        <p className="mt-10 text-center text-sm text-gray-500">{error}</p>
+      </PhoneFrame>
+    );
+  }
 
   if (!animal) {
     return (
       <PhoneFrame>
         <AppHeader backHref="/animals" title="Дэлгэрэнгүй" />
-        <p className="mt-10 text-center text-sm text-gray-500">
-          Мал олдсонгүй.
-        </p>
+        <p className="mt-10 text-center text-sm text-gray-500">Ачаалж байна...</p>
       </PhoneFrame>
     );
   }
 
-  const tagInfo = getTagPrefixInfo(animal.tagEpc);
+  const tagInfo = animal.rfidTag ? getTagPrefixInfo(animal.rfidTag.epc) : null;
 
-  const handlePhotoChange = (file: File | null) => {
+  const handlePhotoChange = async (file: File | null) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        updateAnimalImage(animal.id, reader.result);
-        refreshAnimal();
-      }
-    };
-    reader.readAsDataURL(file);
+    setUploading(true);
+
+    try {
+      const { url } = await uploadImage(file);
+      await updateLivestock(animal.id, {
+        earNumber: animal.earNumber,
+        name: animal.name,
+        species: animal.species,
+        gender: animal.gender,
+        birthYear: animal.birthYear,
+        color: animal.color,
+        markDescription: animal.markDescription,
+        rfidEpc: animal.rfidTag?.epc,
+        imageUrl: url,
+      });
+      refresh();
+    } catch (err) {
+      setLocateError(err instanceof ApiError ? err.message : "Зураг хадгалж чадсангүй.");
+    } finally {
+      setUploading(false);
+    }
   };
 
-  const toggleMissing = () => {
-    updateAnimalStatus(animal.id, animal.status === "MISSING" ? "ACTIVE" : "MISSING");
-    refreshAnimal();
+  const toggleMissing = async () => {
+    await updateLivestockStatus(animal.id, animal.status === "MISSING" ? "ACTIVE" : "MISSING");
+    refresh();
   };
 
   const handleLocate = () => {
@@ -104,14 +156,19 @@ export default function AnimalDetailPage() {
     setLocateError(null);
 
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        updateAnimalLocation(animal.id, {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-          updatedAt: "Дөнгөж сая",
-        });
-        refreshAnimal();
-        setLocating(false);
+      async (position) => {
+        try {
+          await updateLivestockLocation(
+            animal.id,
+            position.coords.latitude,
+            position.coords.longitude
+          );
+          refresh();
+        } catch (err) {
+          setLocateError(err instanceof ApiError ? err.message : "Байршил хадгалж чадсангүй.");
+        } finally {
+          setLocating(false);
+        }
       },
       () => {
         setLocateError("Байршил авах боломжгүй байна. Зөвшөөрлөө шалгана уу.");
@@ -139,34 +196,35 @@ export default function AnimalDetailPage() {
       <button
         type="button"
         onClick={() => fileInputRef.current?.click()}
+        disabled={uploading}
         className="relative mt-4 flex h-56 w-full items-center justify-center overflow-hidden bg-linear-to-b from-[#2a3450] to-[#141a2c]"
       >
         {animal.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={animal.imageUrl}
-            alt={animal.name}
+            alt={animal.name || animal.earNumber}
             className="h-full w-full object-cover"
           />
-        ) : animal.species === "Хонь" ? (
+        ) : animal.species === "SHEEP" ? (
           <PawPrint className="size-20 text-[#f2a93c]/70" strokeWidth={1} />
         ) : (
           <Rabbit className="size-20 text-[#f2a93c]/70" strokeWidth={1} />
         )}
         <span className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-full bg-black/50 px-3 py-1.5 text-xs text-white">
           <Camera className="size-3.5" />
-          Зураг солих
+          {uploading ? "Илгээж байна..." : "Зураг солих"}
         </span>
       </button>
 
       <div className="flex flex-col gap-6 px-6 pb-8 pt-5">
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-1">
-            <h1 className="text-xl font-bold">{animal.name}</h1>
-            <p className="text-xs text-gray-400"># ID: {animal.tagEpc}</p>
+            <h1 className="text-xl font-bold">{animal.name || animal.earNumber}</h1>
+            <p className="text-xs text-gray-400"># ID: {animal.earNumber}</p>
           </div>
           <Badge className="bg-[#f2a93c]/15 text-[#f2a93c]">
-            {animal.species}
+            {animal.species === "SHEEP" ? "Хонь" : "Ямаа"}
           </Badge>
         </div>
 
@@ -194,24 +252,26 @@ export default function AnimalDetailPage() {
           </Button>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <h2 className="text-sm font-semibold text-gray-200">RFID шошго</h2>
-          <Card className="flex-row items-center gap-3 bg-[#141a2c] p-3 ring-1 ring-white/5">
-            <span className={`flex size-10 shrink-0 items-center justify-center rounded-full ${tagInfo.bgClass}`}>
-              {tag?.status === "LOCKED" ? (
-                <Lock className={`size-4 ${tagInfo.textClass}`} />
-              ) : (
-                <Unlock className={`size-4 ${tagInfo.textClass}`} />
-              )}
-            </span>
-            <div className="flex flex-1 flex-col">
-              <p className="text-sm font-medium">{animal.tagEpc}</p>
-            </div>
-            <Badge className={tag ? TAG_STATUS_TONE[tag.status] : TAG_STATUS_TONE.AVAILABLE}>
-              {tag ? TAG_STATUS_LABEL[tag.status] : "—"}
-            </Badge>
-          </Card>
-        </div>
+        {animal.rfidTag ? (
+          <div className="flex flex-col gap-2">
+            <h2 className="text-sm font-semibold text-gray-200">RFID шошго</h2>
+            <Card className="flex-row items-center gap-3 bg-[#141a2c] p-3 ring-1 ring-white/5">
+              <span className={`flex size-10 shrink-0 items-center justify-center rounded-full ${tagInfo!.bgClass}`}>
+                {tag?.status === "LOCKED" ? (
+                  <Lock className={`size-4 ${tagInfo!.textClass}`} />
+                ) : (
+                  <Unlock className={`size-4 ${tagInfo!.textClass}`} />
+                )}
+              </span>
+              <div className="flex flex-1 flex-col">
+                <p className="text-sm font-medium">{animal.rfidTag.epc}</p>
+              </div>
+              <Badge className={tag ? TAG_STATUS_TONE[tag.status] : TAG_STATUS_TONE.AVAILABLE}>
+                {tag ? TAG_STATUS_LABEL[tag.status] : "—"}
+              </Badge>
+            </Card>
+          </div>
+        ) : null}
 
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
@@ -231,7 +291,7 @@ export default function AnimalDetailPage() {
               <MapPin className="size-4 shrink-0 text-[#f2a93c]" />
               {animal.location ? (
                 <span>
-                  {animal.location.lat.toFixed(5)}, {animal.location.lng.toFixed(5)}
+                  {animal.location.latitude.toFixed(5)}, {animal.location.longitude.toFixed(5)}
                 </span>
               ) : (
                 <span className="text-gray-500">Байршил тодорхойгүй байна.</span>
@@ -243,40 +303,48 @@ export default function AnimalDetailPage() {
           </Card>
         </div>
 
-        <div className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold text-gray-200">Скан түүх</h2>
+        {scans && scans.length > 0 ? (
+          <div className="flex flex-col gap-3">
+            <h2 className="text-sm font-semibold text-gray-200">Скан түүх</h2>
 
-          <div className="flex flex-col gap-4">
-            {animal.history.map((entry, index) => (
-              <div key={index} className="flex gap-3">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/5">
-                  <DoorOpen className="size-4 text-[#f2a93c]" strokeWidth={1.75} />
-                </span>
-                <div className="flex flex-col gap-0.5">
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    {entry.location}
-                    <span className="text-xs font-normal text-gray-500">
-                      {entry.time}
-                    </span>
+            <div className="flex flex-col gap-4">
+              {scans.map((scan) => (
+                <div key={scan.id} className="flex gap-3">
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/5">
+                    <DoorOpen className="size-4 text-[#f2a93c]" strokeWidth={1.75} />
+                  </span>
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      {scan.reader?.name ?? "Тодорхойгүй уншигч"}
+                      <span className="text-xs font-normal text-gray-500">
+                        {new Date(scan.scannedAt).toLocaleString("mn-MN")}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-400">
+                      {scan.direction === "ENTER"
+                        ? "Сүрэгт орсон."
+                        : scan.direction === "EXIT"
+                          ? "Бэлчээрт гарсан."
+                          : "Уншигдсан."}
+                    </p>
                   </div>
-                  <p className="text-sm text-gray-400">{entry.note}</p>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        ) : null}
 
-        {relatedNotifications.length > 0 ? (
+        {relatedAlerts.length > 0 ? (
           <div className="flex flex-col gap-3">
             <h2 className="text-sm font-semibold text-gray-200">Мэдэгдэл</h2>
             <div className="flex flex-col gap-2">
-              {relatedNotifications.map((n) => (
-                <Link key={n.id} href="/notifications">
+              {relatedAlerts.map((a: Alert) => (
+                <Link key={a.id} href="/notifications">
                   <Card className="flex-row items-center gap-3 bg-[#141a2c] p-3 ring-1 ring-white/5">
                     <ShieldCheck className="size-4 shrink-0 text-[#f2a93c]" />
                     <div className="flex flex-col">
-                      <p className="text-sm font-medium">{n.title}</p>
-                      <p className="text-xs text-gray-400">{n.message}</p>
+                      <p className="text-sm font-medium">{a.title}</p>
+                      <p className="text-xs text-gray-400">{a.message}</p>
                     </div>
                   </Card>
                 </Link>

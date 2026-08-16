@@ -18,12 +18,20 @@ import { AppHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { addAnimal, claimTag, getTag, type Animal, type Species } from "@/lib/store";
+import {
+  ApiError,
+  claimTag,
+  createLivestock,
+  getTag,
+  uploadImage,
+  type Species,
+} from "@/lib/api";
+import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
 const SPECIES_INFO: Record<Species, { label: string; icon: typeof PawPrint }> = {
-  Хонь: { label: "Хонь", icon: PawPrint },
-  Ямаа: { label: "Ямаа", icon: Rabbit },
+  SHEEP: { label: "Хонь", icon: PawPrint },
+  GOAT: { label: "Ямаа", icon: Rabbit },
 };
 
 const GENDERS = [
@@ -33,8 +41,8 @@ const GENDERS = [
 
 function detectSpeciesFromTag(code: string): Species | null {
   const prefix = code.trim().charAt(0).toUpperCase();
-  if (prefix === "H") return "Хонь";
-  if (prefix === "Y") return "Ямаа";
+  if (prefix === "H") return "SHEEP";
+  if (prefix === "Y") return "GOAT";
   return null;
 }
 
@@ -44,6 +52,7 @@ function normalizeTagEpc(code: string): string {
 }
 
 export default function RegisterAnimalPage() {
+  useAuthGuard();
   const router = useRouter();
   const [tagCode, setTagCode] = useState("");
   const [nickname, setNickname] = useState("");
@@ -54,14 +63,31 @@ export default function RegisterAnimalPage() {
   );
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const species = detectSpeciesFromTag(tagCode);
   const epc = tagCode.trim() ? normalizeTagEpc(tagCode) : "";
-  const existingTag = epc ? getTag(epc) : undefined;
-  const tagBlocked =
-    !!existingTag && (existingTag.status === "CLAIMED" || existingTag.status === "LOCKED");
 
-  const canSubmit = tagCode.trim().length > 0 && species !== null && !tagBlocked;
+  const [tagBlocked, setTagBlocked] = useState(false);
+  useEffect(() => {
+    // When epc is empty the UI never reads tagBlocked (it shows the
+    // "scan a tag" hint instead), so there's nothing to reset here.
+    if (!epc) return;
+    let cancelled = false;
+    getTag(epc)
+      .then((tag) => {
+        if (!cancelled) setTagBlocked(tag.status === "CLAIMED" || tag.status === "LOCKED" || tag.status === "DAMAGED");
+      })
+      .catch(() => {
+        if (!cancelled) setTagBlocked(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [epc]);
+
+  const canSubmit = tagCode.trim().length > 0 && species !== null && !tagBlocked && !submitting;
 
   const photoPreview = useMemo(
     () => (photoFile ? URL.createObjectURL(photoFile) : null),
@@ -74,34 +100,36 @@ export default function RegisterAnimalPage() {
     };
   }, [photoPreview]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!canSubmit || !species) return;
+    setSubmitting(true);
+    setSubmitError(null);
 
-    const id = `animal-${Date.now()}`;
-    const animal: Animal = {
-      id,
-      tagEpc: epc,
-      name: nickname.trim() || species,
-      species,
-      gender: gender ?? "UNKNOWN",
-      birthYear: age ? new Date().getFullYear() - Number(age) : undefined,
-      description: features.trim() || "Тэмдэглэгээ оруулаагүй.",
-      lastSeen: "Дөнгөж сая",
-      status: "ACTIVE",
-      imageUrl: photoPreview,
-      location: null,
-      history: [
-        {
-          location: "Бүртгэл",
-          time: "Дөнгөж сая",
-          note: "Шошго уншуулж систэмд шинээр бүртгэгдлээ.",
-        },
-      ],
-    };
+    try {
+      await claimTag(epc);
 
-    addAnimal(animal);
-    claimTag(epc, "Та", id);
-    router.push(`/animals/${id}`);
+      let imageUrl: string | undefined;
+      if (photoFile) {
+        const uploaded = await uploadImage(photoFile);
+        imageUrl = uploaded.url;
+      }
+
+      const animal = await createLivestock({
+        earNumber: epc,
+        name: nickname.trim() || undefined,
+        species,
+        gender: gender ?? "UNKNOWN",
+        birthYear: age ? new Date().getFullYear() - Number(age) : undefined,
+        markDescription: features.trim() || undefined,
+        rfidEpc: epc,
+        imageUrl,
+      });
+
+      router.push(`/animals/${animal.id}`);
+    } catch (err) {
+      setSubmitError(err instanceof ApiError ? err.message : "Бүртгэж чадсангүй.");
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -260,6 +288,10 @@ export default function RegisterAnimalPage() {
             )}
           </button>
         </div>
+
+        {submitError ? (
+          <p className="text-sm text-red-400">{submitError}</p>
+        ) : null}
       </div>
 
       <Button
@@ -269,7 +301,7 @@ export default function RegisterAnimalPage() {
         disabled={!canSubmit}
         onClick={handleSubmit}
       >
-        Бүртгэх
+        {submitting ? "Бүртгэж байна..." : "Бүртгэх"}
       </Button>
     </PhoneFrame>
   );
