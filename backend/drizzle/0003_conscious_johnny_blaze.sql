@@ -1,0 +1,1 @@
+ALTER TABLE `livestock` ADD `species` text DEFAULT 'SHEEP' NOT NULL;

@@ -158,7 +158,7 @@ describe('livestock CRUD', () => {
 
     const created = await api(
       '/api/livestock',
-      json('POST', { earNumber: 'A-100', gender: 'FEMALE', name: 'Хонь', rfidEpc: 'E280-0001' }, auth),
+      json('POST', { earNumber: 'A-100', species: 'SHEEP', gender: 'FEMALE', name: 'Хонь', rfidEpc: 'E280-0001' }, auth),
     );
     expect(created.status).toBe(200);
     const id = created.body.data.id;
@@ -168,14 +168,14 @@ describe('livestock CRUD', () => {
 
     const dupEar = await api(
       '/api/livestock',
-      json('POST', { earNumber: 'A-100', gender: 'MALE' }, auth),
+      json('POST', { earNumber: 'A-100', species: 'SHEEP', gender: 'MALE' }, auth),
     );
     expect(dupEar.status).toBe(409);
     expect(dupEar.body.code).toBe('DUPLICATE_EAR_NUMBER');
 
     const dupEpc = await api(
       '/api/livestock',
-      json('POST', { earNumber: 'A-101', gender: 'MALE', rfidEpc: 'E280-0001' }, auth),
+      json('POST', { earNumber: 'A-101', species: 'SHEEP', gender: 'MALE', rfidEpc: 'E280-0001' }, auth),
     );
     expect(dupEpc.status).toBe(409);
     expect(dupEpc.body.code).toBe('DUPLICATE_EPC');
@@ -190,7 +190,7 @@ describe('livestock CRUD', () => {
 
     const updated = await api(
       `/api/livestock/${id}`,
-      json('PATCH', { earNumber: 'A-100', gender: 'FEMALE', name: 'Улаан хонь' }, auth),
+      json('PATCH', { earNumber: 'A-100', species: 'SHEEP', gender: 'FEMALE', name: 'Улаан хонь' }, auth),
     );
     expect(updated.status).toBe(200);
     expect(updated.body.data.name).toBe('Улаан хонь');
@@ -217,7 +217,7 @@ describe('livestock CRUD', () => {
     for (let i = 0; i < 3; i += 1) {
       const created = await api(
         '/api/livestock',
-        json('POST', { earNumber: `C-${i}`, gender: 'FEMALE' }, auth),
+        json('POST', { earNumber: `C-${i}`, species: 'SHEEP', gender: 'FEMALE' }, auth),
       );
       expect(created.status).toBe(200);
     }
@@ -238,7 +238,7 @@ describe('status alerts', () => {
 
     const created = await api(
       '/api/livestock',
-      json('POST', { earNumber: 'B-200', gender: 'MALE' }, auth),
+      json('POST', { earNumber: 'B-200', species: 'SHEEP', gender: 'MALE' }, auth),
     );
     const id = created.body.data.id;
 
@@ -318,7 +318,7 @@ describe('rfid device integration', () => {
 
     const created = await api(
       '/api/livestock',
-      json('POST', { earNumber: 'D-300', gender: 'FEMALE', rfidEpc: 'E280-1160' }, auth),
+      json('POST', { earNumber: 'D-300', species: 'SHEEP', gender: 'FEMALE', rfidEpc: 'E280-1160' }, auth),
     );
     expect(created.status).toBe(200);
     const livestockId = created.body.data.id;
@@ -432,5 +432,163 @@ describe('admin', () => {
     const res = await api('/api/admin/statistics', authorized(tokens.accessToken));
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('FORBIDDEN');
+  });
+
+  it('rejects non-admins from the tag registry and dealer registration endpoints', async () => {
+    const tokens = await registerAndLogin('99245566');
+    const auth = tokens.accessToken;
+
+    const tags = await api('/api/admin/tags', authorized(auth));
+    expect(tags.status).toBe(403);
+
+    const unlock = await api('/api/admin/tags/HH-0001/unlock', { method: 'PATCH', headers: { Authorization: `Bearer ${auth}` } });
+    expect(unlock.status).toBe(403);
+
+    const registrations = await api('/api/admin/dealer-registrations', authorized(auth));
+    expect(registrations.status).toBe(403);
+
+    const decide = await api(
+      '/api/admin/dealer-registrations/does-not-exist',
+      json('PATCH', { status: 'APPROVED' }, auth),
+    );
+    expect(decide.status).toBe(403);
+  });
+});
+
+describe('movement history', () => {
+  it('reports point totals and an added count over the range', async () => {
+    const tokens = await registerAndLogin('99256677');
+    const auth = tokens.accessToken;
+
+    await api('/api/livestock', json('POST', { earNumber: 'H-1', species: 'SHEEP', gender: 'FEMALE' }, auth));
+    await api('/api/livestock', json('POST', { earNumber: 'H-2', species: 'SHEEP', gender: 'MALE' }, auth));
+
+    const res = await api('/api/reports/history?range=7d', authorized(auth));
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data.points)).toBe(true);
+    expect(res.body.data.points.length).toBeGreaterThan(0);
+    expect(res.body.data.points.at(-1).total).toBe(2);
+    expect(res.body.data.added).toBe(2);
+  });
+
+  it('falls back to 7d for an unknown range', async () => {
+    const tokens = await registerAndLogin('99267788');
+    const res = await api('/api/reports/history?range=nonsense', authorized(tokens.accessToken));
+    expect(res.status).toBe(200);
+    expect(res.body.data.points.length).toBeLessThanOrEqual(8);
+  });
+});
+
+describe('livestock location', () => {
+  it('sets and returns latitude/longitude', async () => {
+    const tokens = await registerAndLogin('99278899');
+    const auth = tokens.accessToken;
+
+    const created = await api('/api/livestock', json('POST', { earNumber: 'L-1', species: 'SHEEP', gender: 'MALE' }, auth));
+    const id = created.body.data.id;
+    expect(created.body.data.location).toBeNull();
+
+    const located = await api(
+      `/api/livestock/${id}/location`,
+      json('PATCH', { latitude: 47.918, longitude: 106.917 }, auth),
+    );
+    expect(located.status).toBe(200);
+    expect(located.body.data.location).toMatchObject({ latitude: 47.918, longitude: 106.917 });
+    expect(located.body.data.location.updatedAt).toBeTruthy();
+  });
+
+  it('rejects out-of-range coordinates', async () => {
+    const tokens = await registerAndLogin('99289900');
+    const auth = tokens.accessToken;
+    const created = await api('/api/livestock', json('POST', { earNumber: 'L-2', species: 'SHEEP', gender: 'MALE' }, auth));
+    const id = created.body.data.id;
+
+    const res = await api(
+      `/api/livestock/${id}/location`,
+      json('PATCH', { latitude: 999, longitude: 0 }, auth),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 404 for another user\'s livestock', async () => {
+    const ownerTokens = await registerAndLogin('99290011');
+    const created = await api(
+      '/api/livestock',
+      json('POST', { earNumber: 'L-3', species: 'SHEEP', gender: 'MALE' }, ownerTokens.accessToken),
+    );
+    const id = created.body.data.id;
+
+    const otherTokens = await registerAndLogin('99201122');
+    const res = await api(
+      `/api/livestock/${id}/location`,
+      json('PATCH', { latitude: 1, longitude: 1 }, otherTokens.accessToken),
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('rfid tag registry', () => {
+  it('reports AVAILABLE for a tag never seen before', async () => {
+    const tokens = await registerAndLogin('99212233');
+    const res = await api('/api/rfid/tags/HH-9999', authorized(tokens.accessToken));
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ epc: 'HH-9999', status: 'AVAILABLE' });
+  });
+
+  it('claims a tag and locks it to the claiming user', async () => {
+    const tokens = await registerAndLogin('99223311');
+    const auth = tokens.accessToken;
+
+    const claimed = await api('/api/rfid/tags/claim', json('POST', { epc: 'HH-1001' }, auth));
+    expect(claimed.status).toBe(200);
+    expect(claimed.body.data.status).toBe('LOCKED');
+    expect(claimed.body.data.claimedByUserId).toBe(tokens.user.id);
+
+    const fetched = await api('/api/rfid/tags/HH-1001', authorized(auth));
+    expect(fetched.body.data.status).toBe('LOCKED');
+  });
+
+  it('rejects claiming a tag another user already locked', async () => {
+    const first = await registerAndLogin('99234411');
+    await api('/api/rfid/tags/claim', json('POST', { epc: 'HH-2002' }, first.accessToken));
+
+    const second = await registerAndLogin('99245511');
+    const res = await api('/api/rfid/tags/claim', json('POST', { epc: 'HH-2002' }, second.accessToken));
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('TAG_ALREADY_CLAIMED');
+  });
+
+  it('lets the same user re-claim their own tag without conflict', async () => {
+    const tokens = await registerAndLogin('99256611');
+    const auth = tokens.accessToken;
+    await api('/api/rfid/tags/claim', json('POST', { epc: 'HH-3003' }, auth));
+    const again = await api('/api/rfid/tags/claim', json('POST', { epc: 'HH-3003' }, auth));
+    expect(again.status).toBe(200);
+  });
+});
+
+describe('dealer registrations', () => {
+  it('creates a pending request', async () => {
+    const tokens = await registerAndLogin('99267711');
+    const res = await api(
+      '/api/dealer-registrations',
+      json(
+        'POST',
+        { orgName: 'Баянгол Малын Хоршоо', contact: 'Б.Дамдин, 9911-2233', prefixRequested: 'EXT-' },
+        tokens.accessToken,
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('PENDING');
+    expect(res.body.data.orgName).toBe('Баянгол Малын Хоршоо');
+  });
+
+  it('rejects an incomplete request', async () => {
+    const tokens = await registerAndLogin('99278811');
+    const res = await api(
+      '/api/dealer-registrations',
+      json('POST', { orgName: '', contact: '', prefixRequested: '' }, tokens.accessToken),
+    );
+    expect(res.status).toBe(400);
   });
 });

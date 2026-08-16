@@ -1,16 +1,18 @@
 /// <reference types="@cloudflare/workers-types" />
 
-import { and, count, desc, eq, inArray, isNotNull, isNull, like, lt, ne, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, isNotNull, isNull, like, lt, ne, or, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { z } from 'zod';
 import {
   alerts,
+  dealerRegistrations,
   devicePushTokens,
   livestock,
   otpCodes,
   refreshSessions,
   rfidReaders,
   rfidScans,
+  rfidTagRegistry,
   rfidTags,
   users,
 } from './db/schema';
@@ -73,6 +75,7 @@ const updateLivestockStatusSchema = z.object({
 const livestockInputSchema = z.object({
   earNumber: z.string().trim().min(1),
   name: z.string().trim().optional(),
+  species: z.enum(['SHEEP', 'GOAT']),
   gender: z.enum(['MALE', 'FEMALE', 'UNKNOWN']),
   birthYear: z.number().int().optional(),
   color: z.string().trim().optional(),
@@ -100,6 +103,34 @@ const scanInputSchema = z.object({
 const ingestScansSchema = z.object({
   scans: z.array(scanInputSchema).min(1),
 });
+
+const updateLocationSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+});
+
+const claimTagSchema = z.object({
+  epc: z.string().trim().min(1),
+});
+
+const dealerRegistrationInputSchema = z.object({
+  orgName: z.string().trim().min(1),
+  contact: z.string().trim().min(1),
+  prefixRequested: z.string().trim().min(1),
+});
+
+const decideDealerRegistrationSchema = z.object({
+  status: z.enum(['APPROVED', 'REJECTED']),
+});
+
+const HISTORY_RANGES = ['7d', '1m', '3m', '6m', '1y'] as const;
+const HISTORY_RANGE_DAYS: Record<(typeof HISTORY_RANGES)[number], number> = {
+  '7d': 7,
+  '1m': 30,
+  '3m': 90,
+  '6m': 180,
+  '1y': 365,
+};
 
 class ApiFailure extends Error {
   constructor(
@@ -385,12 +416,21 @@ function livestockResponse(
     id: row.id,
     earNumber: row.earNumber,
     name: row.name ?? undefined,
+    species: row.species,
     gender: row.gender,
     birthYear: row.birthYear ?? undefined,
     color: row.color ?? undefined,
     markDescription: row.markDescription ?? undefined,
     imageUrl: row.imageUrl,
     status: row.status,
+    location:
+      row.latitude != null && row.longitude != null
+        ? {
+            latitude: row.latitude,
+            longitude: row.longitude,
+            updatedAt: row.locationUpdatedAt,
+          }
+        : null,
     rfidTag: tag
       ? {
           id: tag.id,
@@ -895,6 +935,7 @@ async function handleCreateLivestock(
     userId,
     earNumber,
     name: cleanOptionalText(input.name),
+    species: input.species,
     gender: input.gender,
     birthYear: input.birthYear ?? null,
     color: cleanOptionalText(input.color),
@@ -958,6 +999,7 @@ async function handleUpdateLivestock(
     .set({
       earNumber,
       name: cleanOptionalText(input.name),
+      species: input.species,
       gender: input.gender,
       birthYear: input.birthYear ?? null,
       color: cleanOptionalText(input.color),
@@ -1013,6 +1055,38 @@ async function handleUpdateLivestockStatus(
       });
     }
   }
+
+  const updated = await db.select().from(livestock).where(eq(livestock.id, livestockId)).get();
+  return apiResponse(await mapLivestock(db, updated!));
+}
+
+async function handleUpdateLivestockLocation(
+  request: Request,
+  db: ReturnType<typeof drizzle>,
+  userId: string,
+  livestockId: string,
+) {
+  const input = await parseJson(request, updateLocationSchema);
+  const existing = await db
+    .select()
+    .from(livestock)
+    .where(and(eq(livestock.id, livestockId), eq(livestock.userId, userId)))
+    .get();
+
+  if (!existing) {
+    throw new ApiFailure(404, 'Малын мэдээлэл олдсонгүй.', 'NOT_FOUND');
+  }
+
+  const timestamp = now();
+  await db
+    .update(livestock)
+    .set({
+      latitude: input.latitude,
+      longitude: input.longitude,
+      locationUpdatedAt: timestamp,
+      updatedAt: timestamp,
+    })
+    .where(eq(livestock.id, livestockId));
 
   const updated = await db.select().from(livestock).where(eq(livestock.id, livestockId)).get();
   return apiResponse(await mapLivestock(db, updated!));
@@ -1265,6 +1339,56 @@ async function handleMissingLivestock(db: ReturnType<typeof drizzle>, userId: st
   return apiResponse(data);
 }
 
+async function handleHistory(request: Request, db: ReturnType<typeof drizzle>, userId: string) {
+  const url = new URL(request.url);
+  const rangeParam = url.searchParams.get('range') ?? '7d';
+  const range = (HISTORY_RANGES as readonly string[]).includes(rangeParam)
+    ? (rangeParam as (typeof HISTORY_RANGES)[number])
+    : '7d';
+  const days = HISTORY_RANGE_DAYS[range];
+
+  const rows = await db
+    .select({ createdAt: livestock.createdAt })
+    .from(livestock)
+    .where(eq(livestock.userId, userId))
+    .all();
+
+  const nowMs = Date.now();
+  const startIso = new Date(nowMs - days * 24 * 60 * 60_000).toISOString();
+
+  const pointCount = Math.min(days, 30);
+  const stepDays = Math.max(1, Math.floor(days / pointCount));
+  const points: { label: string; total: number }[] = [];
+
+  for (let i = pointCount; i >= 0; i -= 1) {
+    const bucketDate = new Date(nowMs - i * stepDays * 24 * 60 * 60_000);
+    const cutoff = bucketDate.toISOString();
+    const total = rows.filter((row) => row.createdAt <= cutoff).length;
+    points.push({
+      label: bucketDate.toLocaleDateString('mn-MN', { month: 'short', day: 'numeric' }),
+      total,
+    });
+  }
+
+  const added = rows.filter((row) => row.createdAt >= startIso).length;
+  const removedRow = await db
+    .select({ value: count() })
+    .from(alerts)
+    .where(
+      and(
+        eq(alerts.userId, userId),
+        eq(alerts.type, 'MISSING'),
+        gte(alerts.createdAt, startIso),
+      ),
+    )
+    .get();
+  const removed = removedRow?.value ?? 0;
+  const todayDelta =
+    points.length >= 2 ? points[points.length - 1].total - points[points.length - 2].total : 0;
+
+  return apiResponse({ points, added, removed, todayDelta });
+}
+
 async function handleDashboard(db: ReturnType<typeof drizzle>, userId: string) {
   const today = new Date().toISOString().slice(0, 10);
   const total = await db
@@ -1288,10 +1412,22 @@ async function handleDashboard(db: ReturnType<typeof drizzle>, userId: string) {
     .from(rfidScans)
     .where(and(eq(rfidScans.userId, userId), like(rfidScans.scannedAt, `${today}%`)))
     .get();
+  const sheepCount = await db
+    .select({ value: count() })
+    .from(livestock)
+    .where(and(eq(livestock.userId, userId), eq(livestock.species, 'SHEEP')))
+    .get();
+  const goatCount = await db
+    .select({ value: count() })
+    .from(livestock)
+    .where(and(eq(livestock.userId, userId), eq(livestock.species, 'GOAT')))
+    .get();
   const recentScans = await db
     .select({
       id: rfidScans.id,
       scannedAt: rfidScans.scannedAt,
+      direction: rfidScans.direction,
+      epc: rfidScans.epc,
       livestockId: livestock.id,
       earNumber: livestock.earNumber,
       name: livestock.name,
@@ -1308,9 +1444,13 @@ async function handleDashboard(db: ReturnType<typeof drizzle>, userId: string) {
     scannedToday: scannedToday?.value ?? 0,
     missingCount: missing?.value ?? 0,
     unknownTagCount: unknownTags?.value ?? 0,
+    sheepCount: sheepCount?.value ?? 0,
+    goatCount: goatCount?.value ?? 0,
     recentScans: recentScans.map((scan) => ({
       id: scan.id,
       scannedAt: scan.scannedAt,
+      direction: scan.direction,
+      epc: scan.epc,
       livestock: {
         id: scan.livestockId,
         earNumber: scan.earNumber,
@@ -1399,6 +1539,165 @@ async function handlePushToken(request: Request, db: ReturnType<typeof drizzle>,
   return apiResponse({ token: input.token });
 }
 
+function tagRegistryResponse(row: typeof rfidTagRegistry.$inferSelect) {
+  return {
+    epc: row.epc,
+    status: row.status,
+    claimedByUserId: row.claimedByUserId ?? undefined,
+    claimedAt: row.claimedAt ?? undefined,
+  };
+}
+
+async function handleClaimTag(request: Request, db: ReturnType<typeof drizzle>, userId: string) {
+  const input = await parseJson(request, claimTagSchema);
+  const epc = input.epc.trim();
+  const timestamp = now();
+
+  const existing = await db
+    .select()
+    .from(rfidTagRegistry)
+    .where(eq(rfidTagRegistry.epc, epc))
+    .get();
+
+  if (existing && existing.status === 'DAMAGED') {
+    throw new ApiFailure(409, 'Энэ шошго гэмтэлтэй тул ашиглах боломжгүй.', 'TAG_DAMAGED');
+  }
+
+  if (
+    existing &&
+    (existing.status === 'CLAIMED' || existing.status === 'LOCKED') &&
+    existing.claimedByUserId !== userId
+  ) {
+    throw new ApiFailure(409, 'Энэ шошго өөр хэрэглэгчид бүртгэгдсэн байна.', 'TAG_ALREADY_CLAIMED');
+  }
+
+  if (existing) {
+    await db
+      .update(rfidTagRegistry)
+      .set({ status: 'LOCKED', claimedByUserId: userId, claimedAt: timestamp, updatedAt: timestamp })
+      .where(eq(rfidTagRegistry.epc, epc));
+  } else {
+    await db.insert(rfidTagRegistry).values({
+      epc,
+      status: 'LOCKED',
+      claimedByUserId: userId,
+      claimedAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+  }
+
+  const tag = await db.select().from(rfidTagRegistry).where(eq(rfidTagRegistry.epc, epc)).get();
+  return apiResponse(tagRegistryResponse(tag!));
+}
+
+async function handleGetTag(db: ReturnType<typeof drizzle>, epc: string) {
+  const tag = await db.select().from(rfidTagRegistry).where(eq(rfidTagRegistry.epc, epc)).get();
+
+  if (!tag) {
+    return apiResponse({ epc, status: 'AVAILABLE' as const });
+  }
+
+  return apiResponse(tagRegistryResponse(tag));
+}
+
+async function handleListTags(db: ReturnType<typeof drizzle>) {
+  const rows = await db.select().from(rfidTagRegistry).orderBy(desc(rfidTagRegistry.updatedAt)).all();
+  return apiResponse(rows.map(tagRegistryResponse));
+}
+
+async function handleUnlockTag(db: ReturnType<typeof drizzle>, epc: string) {
+  const existing = await db.select().from(rfidTagRegistry).where(eq(rfidTagRegistry.epc, epc)).get();
+
+  if (!existing) {
+    throw new ApiFailure(404, 'Шошго олдсонгүй.', 'NOT_FOUND');
+  }
+
+  await db
+    .update(rfidTagRegistry)
+    .set({ status: 'AVAILABLE', claimedByUserId: null, claimedAt: null, updatedAt: now() })
+    .where(eq(rfidTagRegistry.epc, epc));
+
+  const updated = await db.select().from(rfidTagRegistry).where(eq(rfidTagRegistry.epc, epc)).get();
+  return apiResponse(tagRegistryResponse(updated!));
+}
+
+function dealerRegistrationResponse(row: typeof dealerRegistrations.$inferSelect) {
+  return {
+    id: row.id,
+    orgName: row.orgName,
+    contact: row.contact,
+    prefixRequested: row.prefixRequested,
+    status: row.status,
+    createdAt: row.createdAt,
+    decidedAt: row.decidedAt ?? undefined,
+  };
+}
+
+async function handleCreateDealerRegistration(
+  request: Request,
+  db: ReturnType<typeof drizzle>,
+  userId: string,
+) {
+  const input = await parseJson(request, dealerRegistrationInputSchema);
+  const id = createId('dealer');
+
+  await db.insert(dealerRegistrations).values({
+    id,
+    requestedByUserId: userId,
+    orgName: input.orgName.trim(),
+    contact: input.contact.trim(),
+    prefixRequested: input.prefixRequested.trim(),
+    status: 'PENDING',
+    createdAt: now(),
+  });
+
+  const created = await db
+    .select()
+    .from(dealerRegistrations)
+    .where(eq(dealerRegistrations.id, id))
+    .get();
+  return apiResponse(dealerRegistrationResponse(created!));
+}
+
+async function handleListDealerRegistrations(db: ReturnType<typeof drizzle>) {
+  const rows = await db
+    .select()
+    .from(dealerRegistrations)
+    .orderBy(desc(dealerRegistrations.createdAt))
+    .all();
+  return apiResponse(rows.map(dealerRegistrationResponse));
+}
+
+async function handleDecideDealerRegistration(
+  request: Request,
+  db: ReturnType<typeof drizzle>,
+  registrationId: string,
+) {
+  const input = await parseJson(request, decideDealerRegistrationSchema);
+  const existing = await db
+    .select()
+    .from(dealerRegistrations)
+    .where(eq(dealerRegistrations.id, registrationId))
+    .get();
+
+  if (!existing) {
+    throw new ApiFailure(404, 'Хүсэлт олдсонгүй.', 'NOT_FOUND');
+  }
+
+  await db
+    .update(dealerRegistrations)
+    .set({ status: input.status, decidedAt: now() })
+    .where(eq(dealerRegistrations.id, registrationId));
+
+  const updated = await db
+    .select()
+    .from(dealerRegistrations)
+    .where(eq(dealerRegistrations.id, registrationId))
+    .get();
+  return apiResponse(dealerRegistrationResponse(updated!));
+}
+
 async function handleUpload(request: Request) {
   const formData = await request.formData();
   const file = formData.get('file');
@@ -1464,12 +1763,40 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
     return handleMissingLivestock(db, user.id);
   }
 
+  if (request.method === 'GET' && path === '/api/reports/history') {
+    return handleHistory(request, db, user.id);
+  }
+
   if (request.method === 'GET' && path === '/api/admin/statistics') {
     if (user.role !== 'ADMIN') {
       throw new ApiFailure(403, 'Админ эрх шаардлагатай.', 'FORBIDDEN');
     }
 
     return handleAdminStatistics(db);
+  }
+
+  if (request.method === 'GET' && path === '/api/admin/tags') {
+    if (user.role !== 'ADMIN') {
+      throw new ApiFailure(403, 'Админ эрх шаардлагатай.', 'FORBIDDEN');
+    }
+
+    return handleListTags(db);
+  }
+
+  if (request.method === 'POST' && path === '/api/rfid/tags/claim') {
+    return handleClaimTag(request, db, user.id);
+  }
+
+  if (request.method === 'GET' && path === '/api/admin/dealer-registrations') {
+    if (user.role !== 'ADMIN') {
+      throw new ApiFailure(403, 'Админ эрх шаардлагатай.', 'FORBIDDEN');
+    }
+
+    return handleListDealerRegistrations(db);
+  }
+
+  if (request.method === 'POST' && path === '/api/dealer-registrations') {
+    return handleCreateDealerRegistration(request, db, user.id);
   }
 
   if (request.method === 'GET' && path === '/api/alerts') {
@@ -1528,11 +1855,43 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
       ctx,
     );
   }
-  
+
+  const livestockLocationMatch = path.match(/^\/api\/livestock\/([^/]+)\/location$/);
+
+  if (livestockLocationMatch && request.method === 'PATCH') {
+    return handleUpdateLivestockLocation(request, db, user.id, livestockLocationMatch[1]);
+  }
+
   const alertReadMatch = path.match(/^\/api\/alerts\/([^/]+)\/read$/);
 
   if (alertReadMatch && request.method === 'PATCH') {
     return handleReadAlert(request, db, user.id, alertReadMatch[1]);
+  }
+
+  const tagUnlockMatch = path.match(/^\/api\/admin\/tags\/([^/]+)\/unlock$/);
+
+  if (tagUnlockMatch && request.method === 'PATCH') {
+    if (user.role !== 'ADMIN') {
+      throw new ApiFailure(403, 'Админ эрх шаардлагатай.', 'FORBIDDEN');
+    }
+
+    return handleUnlockTag(db, decodeURIComponent(tagUnlockMatch[1]));
+  }
+
+  const tagGetMatch = path.match(/^\/api\/rfid\/tags\/([^/]+)$/);
+
+  if (tagGetMatch && request.method === 'GET') {
+    return handleGetTag(db, decodeURIComponent(tagGetMatch[1]));
+  }
+
+  const dealerRegistrationDecisionMatch = path.match(/^\/api\/admin\/dealer-registrations\/([^/]+)$/);
+
+  if (dealerRegistrationDecisionMatch && request.method === 'PATCH') {
+    if (user.role !== 'ADMIN') {
+      throw new ApiFailure(403, 'Админ эрх шаардлагатай.', 'FORBIDDEN');
+    }
+
+    return handleDecideDealerRegistration(request, db, dealerRegistrationDecisionMatch[1]);
   }
 
   const livestockMatch = path.match(/^\/api\/livestock\/([^/]+)$/);

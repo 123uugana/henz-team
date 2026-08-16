@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const users = sqliteTable(
   'users',
@@ -60,6 +60,9 @@ export const livestock = sqliteTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     earNumber: text('ear_number').notNull(),
     name: text('name'),
+    species: text('species', { enum: ['SHEEP', 'GOAT'] })
+      .notNull()
+      .default('SHEEP'),
     gender: text('gender', { enum: ['MALE', 'FEMALE', 'UNKNOWN'] })
       .notNull()
       .default('UNKNOWN'),
@@ -70,6 +73,9 @@ export const livestock = sqliteTable(
     status: text('status', { enum: ['ACTIVE', 'MISSING', 'INACTIVE'] })
       .notNull()
       .default('ACTIVE'),
+    latitude: real('latitude'),
+    longitude: real('longitude'),
+    locationUpdatedAt: text('location_updated_at'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
   },
@@ -177,5 +183,50 @@ export const devicePushTokens = sqliteTable(
   (table) => [
     uniqueIndex('device_push_tokens_token_idx').on(table.token),
     index('device_push_tokens_user_id_idx').on(table.userId),
+  ],
+);
+
+// Tracks the lifecycle of a physical RFID tag (provisioned -> claimed by a
+// farmer -> locked to their livestock, or damaged/retired). This is separate
+// from `rfidTags`, which binds one EPC to one livestock record for CRUD; this
+// table is the admin-facing registry used to see and reclaim tags globally.
+export const rfidTagRegistry = sqliteTable(
+  'rfid_tag_registry',
+  {
+    epc: text('epc').primaryKey(),
+    status: text('status', { enum: ['AVAILABLE', 'CLAIMED', 'LOCKED', 'DAMAGED'] })
+      .notNull()
+      .default('AVAILABLE'),
+    claimedByUserId: text('claimed_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    claimedAt: text('claimed_at'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    index('rfid_tag_registry_status_idx').on(table.status),
+    index('rfid_tag_registry_claimed_by_idx').on(table.claimedByUserId),
+  ],
+);
+
+export const dealerRegistrations = sqliteTable(
+  'dealer_registrations',
+  {
+    id: text('id').primaryKey(),
+    requestedByUserId: text('requested_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    orgName: text('org_name').notNull(),
+    contact: text('contact').notNull(),
+    prefixRequested: text('prefix_requested').notNull(),
+    status: text('status', { enum: ['PENDING', 'APPROVED', 'REJECTED'] })
+      .notNull()
+      .default('PENDING'),
+    createdAt: text('created_at').notNull(),
+    decidedAt: text('decided_at'),
+  },
+  (table) => [
+    index('dealer_registrations_status_idx').on(table.status),
   ],
 );

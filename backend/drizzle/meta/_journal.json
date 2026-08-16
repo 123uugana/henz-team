@@ -15,6 +15,20 @@
       "when": 1786584584729,
       "tag": "0001_dashing_demogoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786889812987,
+      "tag": "0002_bitter_the_phantom",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1786920680429,
+      "tag": "0003_conscious_johnny_blaze",
+      "breakpoints": true
     }
   ]
 }

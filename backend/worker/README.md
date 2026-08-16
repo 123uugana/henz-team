@@ -68,6 +68,7 @@ PATCH /api/auth/me                  update profile (name)
 
 GET   /api/dashboard                farmer dashboard summary
 GET   /api/reports/missing          missing livestock list
+GET   /api/reports/history          movement history (?range=7d|1m|3m|6m|1y)
 
 GET   /api/livestock                list my livestock (?search=, ?page=, ?limit=)
 POST  /api/livestock                create livestock
@@ -75,6 +76,7 @@ GET   /api/livestock/:id            livestock detail
 PATCH /api/livestock/:id            update livestock
 DELETE /api/livestock/:id           delete livestock
 PATCH /api/livestock/:id/status     set ACTIVE / MISSING / INACTIVE
+PATCH /api/livestock/:id/location   set latitude/longitude
 GET   /api/livestock/:id/scans      RFID scan history
 
 GET   /api/alerts                   my notifications
@@ -87,7 +89,16 @@ POST  /api/scans                    ingest RFID scans (batch, device-facing)
 GET   /api/scans                    recent scans with livestock info
 POST  /api/uploads                  upload a livestock image
 
+GET   /api/rfid/tags/:epc           tag lifecycle status (AVAILABLE if unseen)
+POST  /api/rfid/tags/claim          claim/lock a tag for the current user
+
+POST  /api/dealer-registrations           request a prefix for an outside org
+GET   /api/admin/dealer-registrations     list requests (ADMIN only)
+PATCH /api/admin/dealer-registrations/:id approve/reject (ADMIN only)
+
 GET   /api/admin/statistics         system-wide stats (ADMIN only)
+GET   /api/admin/tags               all tags in the registry (ADMIN only)
+PATCH /api/admin/tags/:epc/unlock   reset a tag back to AVAILABLE (ADMIN only)
 ```
 
 ## RFID reader integration
