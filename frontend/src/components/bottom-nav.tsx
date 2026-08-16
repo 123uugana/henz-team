@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Нүүр", icon: Home },
-  { label: "Тооллого", icon: ClipboardList },
+  { href: "/history", label: "Тооллого", icon: ClipboardList },
   { href: "/animals/new", label: "Мал нэмэх", icon: Plus, accent: true },
   { href: "/animals", label: "Малууд", icon: PawPrint },
   { href: "/notifications", label: "Мэдэгдэл", icon: Bell, badge: true },
@@ -19,11 +19,18 @@ export function BottomNav() {
   return (
     <nav className="mt-8 -mx-6 flex items-center justify-between border-t border-white/5 px-4 pt-3">
       {NAV_ITEMS.map((item) => {
-        const active = "href" in item && pathname === item.href;
+        const active = pathname === item.href;
         const Icon = item.icon;
 
-        const content = (
-          <>
+        return (
+          <Link
+            key={item.label}
+            href={item.href}
+            className={cn(
+              "flex flex-1 flex-col items-center gap-1 py-1",
+              active ? "text-white" : "text-gray-500"
+            )}
+          >
             <span
               className={cn(
                 "relative flex items-center justify-center",
@@ -45,32 +52,6 @@ export function BottomNav() {
             >
               {item.label}
             </span>
-          </>
-        );
-
-        const itemClassName = "flex flex-1 flex-col items-center gap-1 py-1";
-
-        if (!("href" in item) || !item.href) {
-          return (
-            <span
-              key={item.label}
-              className={cn(itemClassName, "text-gray-500")}
-            >
-              {content}
-            </span>
-          );
-        }
-
-        return (
-          <Link
-            key={item.label}
-            href={item.href}
-            className={cn(
-              itemClassName,
-              active ? "text-white" : "text-gray-500"
-            )}
-          >
-            {content}
           </Link>
         );
       })}

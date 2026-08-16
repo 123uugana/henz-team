@@ -1,11 +1,12 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Camera,
   CheckCircle2,
   CircleAlert,
+  Lock,
   Mars,
   PawPrint,
   Rabbit,
@@ -17,29 +18,37 @@ import { AppHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { addAnimal, claimTag, getTag, type Animal, type Species } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
-type Species = "sheep" | "goat";
-
 const SPECIES_INFO: Record<Species, { label: string; icon: typeof PawPrint }> = {
-  sheep: { label: "Хонь", icon: PawPrint },
-  goat: { label: "Ямаа", icon: Rabbit },
+  Хонь: { label: "Хонь", icon: PawPrint },
+  Ямаа: { label: "Ямаа", icon: Rabbit },
 };
 
 const GENDERS = [
-  { value: "male", label: "Эр", icon: Mars },
-  { value: "female", label: "Эм", icon: Venus },
+  { value: "MALE", label: "Эр", icon: Mars },
+  { value: "FEMALE", label: "Эм", icon: Venus },
 ] as const;
 
 function detectSpeciesFromTag(code: string): Species | null {
   const prefix = code.trim().charAt(0).toUpperCase();
-  if (prefix === "H") return "sheep";
-  if (prefix === "Y") return "goat";
+  if (prefix === "H") return "Хонь";
+  if (prefix === "Y") return "Ямаа";
   return null;
 }
 
+function normalizeTagEpc(code: string): string {
+  const digits = code.trim().replace(/^[HY]-?/i, "");
+  return `HH-${digits}`;
+}
+
 export default function RegisterAnimalPage() {
+  const router = useRouter();
   const [tagCode, setTagCode] = useState("");
+  const [nickname, setNickname] = useState("");
+  const [age, setAge] = useState("");
+  const [features, setFeatures] = useState("");
   const [gender, setGender] = useState<(typeof GENDERS)[number]["value"] | null>(
     null
   );
@@ -47,7 +56,12 @@ export default function RegisterAnimalPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const species = detectSpeciesFromTag(tagCode);
-  const canSubmit = tagCode.trim().length > 0 && species !== null;
+  const epc = tagCode.trim() ? normalizeTagEpc(tagCode) : "";
+  const existingTag = epc ? getTag(epc) : undefined;
+  const tagBlocked =
+    !!existingTag && (existingTag.status === "CLAIMED" || existingTag.status === "LOCKED");
+
+  const canSubmit = tagCode.trim().length > 0 && species !== null && !tagBlocked;
 
   const photoPreview = useMemo(
     () => (photoFile ? URL.createObjectURL(photoFile) : null),
@@ -59,6 +73,36 @@ export default function RegisterAnimalPage() {
       if (photoPreview) URL.revokeObjectURL(photoPreview);
     };
   }, [photoPreview]);
+
+  const handleSubmit = () => {
+    if (!canSubmit || !species) return;
+
+    const id = `animal-${Date.now()}`;
+    const animal: Animal = {
+      id,
+      tagEpc: epc,
+      name: nickname.trim() || species,
+      species,
+      gender: gender ?? "UNKNOWN",
+      birthYear: age ? new Date().getFullYear() - Number(age) : undefined,
+      description: features.trim() || "Тэмдэглэгээ оруулаагүй.",
+      lastSeen: "Дөнгөж сая",
+      status: "ACTIVE",
+      imageUrl: photoPreview,
+      location: null,
+      history: [
+        {
+          location: "Бүртгэл",
+          time: "Дөнгөж сая",
+          note: "Шошго уншуулж систэмд шинээр бүртгэгдлээ.",
+        },
+      ],
+    };
+
+    addAnimal(animal);
+    claimTag(epc, "Та", id);
+    router.push(`/animals/${id}`);
+  };
 
   return (
     <PhoneFrame>
@@ -89,23 +133,30 @@ export default function RegisterAnimalPage() {
           <p className="text-xs text-gray-500">
             Шошгыг уншуулахад малын төрөл автоматаар танигдана.
           </p>
-        ) : species ? (
+        ) : !species ? (
+          <div className="flex items-center gap-2 rounded-2xl bg-red-500/10 px-4 py-3">
+            <CircleAlert className="size-4 shrink-0 text-red-400" />
+            <span className="text-sm text-red-400">
+              Кодыг таньсангүй. H эсвэл Y үсгээр эхэлсэн байх ёстой.
+            </span>
+          </div>
+        ) : tagBlocked ? (
+          <div className="flex items-center gap-2 rounded-2xl bg-red-500/10 px-4 py-3">
+            <Lock className="size-4 shrink-0 text-red-400" />
+            <span className="text-sm text-red-400">
+              Энэ шошго өөр хэрэглэгчид бүртгэгдсэн байна ({epc}).
+            </span>
+          </div>
+        ) : (
           <div className="flex items-center gap-2 rounded-2xl bg-emerald-400/10 px-4 py-3">
             {(() => {
               const Icon = SPECIES_INFO[species].icon;
               return <Icon className="size-4 text-emerald-400" strokeWidth={1.75} />;
             })()}
             <span className="text-sm font-medium text-emerald-400">
-              {SPECIES_INFO[species].label} — автоматаар танигдлаа
+              {SPECIES_INFO[species].label} — автоматаар танигдлаа ({epc})
             </span>
             <CheckCircle2 className="ml-auto size-4 text-emerald-400" />
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 rounded-2xl bg-red-500/10 px-4 py-3">
-            <CircleAlert className="size-4 shrink-0 text-red-400" />
-            <span className="text-sm text-red-400">
-              Кодыг таньсангүй. H эсвэл Y үсгээр эхэлсэн байх ёстой.
-            </span>
           </div>
         )}
       </div>
@@ -121,6 +172,8 @@ export default function RegisterAnimalPage() {
           </Label>
           <Input
             id="nickname"
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
             placeholder="Жишээ: Халтар"
             className="h-14 border-white/10 bg-[#161c2c] px-4 py-0 text-base text-white placeholder:text-gray-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
           />
@@ -134,6 +187,8 @@ export default function RegisterAnimalPage() {
             <Input
               id="age"
               type="number"
+              value={age}
+              onChange={(e) => setAge(e.target.value)}
               placeholder="0"
               className="h-14 border-white/10 bg-[#161c2c] px-4 py-0 text-base text-white placeholder:text-gray-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
             />
@@ -168,6 +223,8 @@ export default function RegisterAnimalPage() {
           </Label>
           <Input
             id="features"
+            value={features}
+            onChange={(e) => setFeatures(e.target.value)}
             placeholder="Жишээ: Цагаан толботой"
             className="h-14 border-white/10 bg-[#161c2c] px-4 py-0 text-base text-white placeholder:text-gray-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
           />
@@ -210,7 +267,7 @@ export default function RegisterAnimalPage() {
         size="xl"
         className="mt-8 w-full"
         disabled={!canSubmit}
-        render={<Link href="/animals" />}
+        onClick={handleSubmit}
       >
         Бүртгэх
       </Button>

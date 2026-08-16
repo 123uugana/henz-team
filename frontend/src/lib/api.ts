@@ -53,11 +53,21 @@ export interface VerifyOtpResult {
   requiresProfileSetup: boolean;
 }
 
-export function sendOtp(phoneNumber: string) {
-  return apiFetch<{ phoneNumber: string; code?: string }>("/api/auth/send-otp", {
-    method: "POST",
-    body: JSON.stringify({ phoneNumber }),
-  });
+export async function sendOtp(phoneNumber: string) {
+  const result = await apiFetch<{ phoneNumber: string; code?: string }>(
+    "/api/auth/send-otp",
+    {
+      method: "POST",
+      body: JSON.stringify({ phoneNumber }),
+    }
+  );
+
+  if (result.code) {
+    // Only present when the backend has EXPOSE_OTP=true (local/dev testing).
+    console.log(`[dev] OTP code for ${phoneNumber}: ${result.code}`);
+  }
+
+  return result;
 }
 
 export function verifyOtp(phoneNumber: string, code: string) {

@@ -1,108 +1,82 @@
-import { CloudOff, RefreshCw, Rss, UploadCloud, Wifi } from "lucide-react";
+import { Antenna, Router, Signal, Wifi } from "lucide-react";
 import { PhoneFrame } from "@/components/phone-frame";
 import { AppHeader } from "@/components/app-header";
 import { BottomNav } from "@/components/bottom-nav";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
-const SIGNAL_BARS = [1, 2, 3, 4, 5];
-const SIGNAL_STRENGTH = 4;
+type HealthStatus = "ONLINE" | "WARNING" | "OFFLINE";
 
-export default function DeviceStatusPage() {
+const STATUS_TONE: Record<HealthStatus, string> = {
+  ONLINE: "bg-emerald-400/15 text-emerald-400",
+  WARNING: "bg-[#f2a93c]/15 text-[#f2a93c]",
+  OFFLINE: "bg-red-500/15 text-red-400",
+};
+
+const STATUS_LABEL: Record<HealthStatus, string> = {
+  ONLINE: "ONLINE",
+  WARNING: "WARNING",
+  OFFLINE: "OFFLINE",
+};
+
+const healthCards = [
+  {
+    id: "ant-a",
+    icon: Antenna,
+    title: "Antenna A",
+    status: "ONLINE" as HealthStatus,
+    metricLabel: "RSSI",
+    metricValue: "-47 dBm",
+  },
+  {
+    id: "ant-b",
+    icon: Antenna,
+    title: "Antenna B",
+    status: "ONLINE" as HealthStatus,
+    metricLabel: "RSSI",
+    metricValue: "-52 dBm",
+  },
+  {
+    id: "network",
+    icon: Wifi,
+    title: "4G сүлжээ",
+    status: "ONLINE" as HealthStatus,
+    metricLabel: "Signal",
+    metricValue: "82%",
+  },
+  {
+    id: "gateway",
+    icon: Router,
+    title: "Gateway",
+    status: "WARNING" as HealthStatus,
+    metricLabel: "Queue",
+    metricValue: "12",
+  },
+];
+
+export default function DeviceHealthPage() {
   return (
     <PhoneFrame>
-      <AppHeader backHref="/dashboard" />
+      <AppHeader backHref="/dashboard" title="Төхөөрөмжийн төлөв" />
 
-      <div className="mt-6 flex flex-col gap-1">
-        <h1 className="text-xl font-bold">Төхөөрөмжийн Төлөв</h1>
-        <p className="text-sm text-gray-400">
-          Сүлжээ болон уншигчийн мэдээлэл
-        </p>
-      </div>
-
-      <div className="mt-6 flex flex-col gap-3">
-        <Card className="gap-4 bg-[#141a2c] p-4 ring-1 ring-white/5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
+      <div className="mt-6 grid grid-cols-2 gap-3">
+        {healthCards.map(({ id, icon: Icon, title, status, metricLabel, metricValue }) => (
+          <Card key={id} className="gap-3 bg-[#141a2c] p-4 ring-1 ring-white/5">
+            <div className="flex items-center justify-between">
               <span className="flex size-9 items-center justify-center rounded-full bg-white/5">
-                <Wifi className="size-4 text-[#f2a93c]" strokeWidth={1.75} />
+                <Icon className="size-4 text-[#f2a93c]" strokeWidth={1.75} />
               </span>
-              <div className="flex flex-col">
-                <p className="text-sm font-semibold">Үндсэн Антен</p>
-                <p className="text-xs text-gray-500">ID: ANT-6402</p>
-              </div>
+              <Badge className={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Badge>
             </div>
-            <Badge className="bg-emerald-400/15 text-emerald-400">
-              Идэвхтэй
-            </Badge>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-400">Дохионы Хүч</p>
-            <div className="flex items-end gap-1">
-              {SIGNAL_BARS.map((bar) => (
-                <span
-                  key={bar}
-                  style={{ height: `${bar * 4 + 6}px` }}
-                  className={cn(
-                    "w-1.5 rounded-full",
-                    bar <= SIGNAL_STRENGTH ? "bg-[#f2a93c]" : "bg-white/10"
-                  )}
-                />
-              ))}
+            <div className="flex flex-col">
+              <p className="text-sm font-semibold">{title}</p>
+              <p className="flex items-center gap-1 text-xs text-gray-400">
+                <Signal className="size-3" />
+                {metricLabel}: {metricValue}
+              </p>
             </div>
-          </div>
-        </Card>
-
-        <Card className="gap-3 bg-[#141a2c] p-4 ring-1 ring-white/5">
-          <div className="flex items-center gap-2.5">
-            <span className="flex size-9 items-center justify-center rounded-full bg-white/5">
-              <Rss className="size-4 text-[#f2a93c]" strokeWidth={1.75} />
-            </span>
-            <p className="text-sm font-semibold">Уншигчийн Цохилт</p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1 rounded-2xl bg-white/5 p-3">
-              <span className="flex items-center gap-1.5 text-xs text-gray-400">
-                <RefreshCw className="size-3" />
-                Сүүлийн Синхрон
-              </span>
-              <p className="text-sm font-semibold">2 мин өмнө</p>
-            </div>
-            <div className="flex flex-col gap-1 rounded-2xl bg-white/5 p-3">
-              <span className="text-xs text-gray-400">Цэнэг</span>
-              <p className="text-sm font-semibold">54%</p>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="gap-3 bg-red-500/10 p-4 ring-1 ring-red-500/20">
-          <div className="flex items-center gap-2.5">
-            <CloudOff className="size-4 text-red-400" strokeWidth={1.75} />
-            <p className="text-sm font-semibold text-red-400">
-              Оффлайн Дараалал
-            </p>
-          </div>
-          <p className="text-xs text-gray-400">
-            Холболт тасарсан үед хадгалагдсан бичлэгүүд
-          </p>
-          <p>
-            <span className="text-3xl font-bold text-red-400">142</span>
-            <span className="ml-2 text-sm text-gray-400">
-              бичлэг хүлээгдэж байна
-            </span>
-          </p>
-          <Button
-            variant="outline"
-            className="w-full border-red-500/30 bg-transparent text-red-400 hover:bg-red-500/10"
-          >
-            <UploadCloud />
-            Апплоад хийхийг оролдох
-          </Button>
-        </Card>
+          </Card>
+        ))}
       </div>
 
       <BottomNav />

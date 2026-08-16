@@ -1,8 +1,17 @@
-import { BadgeCheck, Camera, User } from "lucide-react";
+import Link from "next/link";
+import {
+  BadgeCheck,
+  Building2,
+  Camera,
+  ChevronRight,
+  Tags,
+  User,
+} from "lucide-react";
 import { PhoneFrame } from "@/components/phone-frame";
 import { AppHeader } from "@/components/app-header";
 import { Avatar, AvatarBadge, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -60,7 +69,31 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      <Button variant="brand" size="xl" className="mt-auto w-full">
+      <div className="mt-8 flex flex-col gap-2">
+        <h2 className="text-sm font-semibold text-gray-200">Админ</h2>
+
+        <Link href="/admin/tags">
+          <Card className="flex-row items-center gap-3 bg-[#141a2c] p-3 ring-1 ring-white/5">
+            <span className="flex size-9 items-center justify-center rounded-full bg-white/5">
+              <Tags className="size-4 text-[#f2a93c]" strokeWidth={1.75} />
+            </span>
+            <p className="flex-1 text-sm font-medium">Tag удирдлага</p>
+            <ChevronRight className="size-4 text-gray-500" />
+          </Card>
+        </Link>
+
+        <Link href="/admin/registrations">
+          <Card className="flex-row items-center gap-3 bg-[#141a2c] p-3 ring-1 ring-white/5">
+            <span className="flex size-9 items-center justify-center rounded-full bg-white/5">
+              <Building2 className="size-4 text-[#f2a93c]" strokeWidth={1.75} />
+            </span>
+            <p className="flex-1 text-sm font-medium">Байгууллагын хүсэлт</p>
+            <ChevronRight className="size-4 text-gray-500" />
+          </Card>
+        </Link>
+      </div>
+
+      <Button variant="brand" size="xl" className="mt-8 w-full">
         Хадгалах
       </Button>
     </PhoneFrame>

@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { Megaphone, PawPrint, TriangleAlert } from "lucide-react";
 import { PhoneFrame } from "@/components/phone-frame";
@@ -6,7 +8,7 @@ import { BottomNav } from "@/components/bottom-nav";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getAnimal } from "@/lib/animals";
+import { getAnimal } from "@/lib/store";
 
 const summary = [
   { label: "Нийт мал", value: "1,245", tone: "text-white" },
@@ -62,7 +64,7 @@ export default function MissingAnimalsPage() {
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col">
                   <p className="text-sm font-medium">
-                    {animal.name} {animal.tagId}
+                    {animal.name} {animal.tagEpc}
                   </p>
                   <p className="truncate text-xs text-gray-400">
                     {animal.description}
