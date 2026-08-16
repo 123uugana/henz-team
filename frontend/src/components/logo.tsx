@@ -6,51 +6,58 @@ export function Logo({ className }: { className?: string }) {
       xmlns="http://www.w3.org/2000/svg"
       className={className}
     >
-      <circle cx="50" cy="50" r="46" stroke="currentColor" strokeWidth="3" />
+      <circle cx="50" cy="50" r="46" stroke="currentColor" strokeWidth="2.6" />
 
       {/* Sheep, left: woolly cap made of overlapping circles + round face */}
-      <circle cx="21" cy="38" r="7" stroke="currentColor" strokeWidth="2.4" />
-      <circle cx="30" cy="32" r="8" stroke="currentColor" strokeWidth="2.4" />
-      <circle cx="40" cy="35" r="7" stroke="currentColor" strokeWidth="2.4" />
-      <circle cx="30" cy="46" r="11" stroke="currentColor" strokeWidth="2.6" />
-      <circle cx="20" cy="48" r="3.5" stroke="currentColor" strokeWidth="2.2" />
-      <circle cx="34" cy="43" r="1.8" fill="currentColor" />
+      <circle cx="21" cy="38" r="7" stroke="currentColor" strokeWidth="2.3" />
+      <circle cx="30" cy="31" r="8" stroke="currentColor" strokeWidth="2.3" />
+      <circle cx="40" cy="35" r="7" stroke="currentColor" strokeWidth="2.3" />
+      <circle cx="30" cy="47" r="11.5" stroke="currentColor" strokeWidth="2.5" />
+      <path
+        d="M19 50 Q13 49 14 43"
+        stroke="currentColor"
+        strokeWidth="2.1"
+        strokeLinecap="round"
+      />
+      <circle cx="35" cy="44" r="1.8" fill="currentColor" />
 
-      {/* Goat, right: angular face + swept-back horn */}
+      {/* Goat, right: rounded face + swept-back ridged horn + small ear */}
       <ellipse
         cx="68"
-        cy="50"
-        rx="12"
-        ry="14"
+        cy="51"
+        rx="12.5"
+        ry="14.5"
         stroke="currentColor"
-        strokeWidth="2.6"
+        strokeWidth="2.5"
       />
       <path
-        d="M66 37
-           C62 27 68 17 79 18
-           C81 26 74 30 68 38"
+        d="M64 38
+           C59 27 64 14 78 12
+           C83 22 76 27 68 39"
         stroke="currentColor"
-        strokeWidth="2.6"
+        strokeWidth="2.5"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+      <path d="M67 25 L74 22" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M65 31 L72 28" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
       <path
-        d="M78 45 L84 42"
+        d="M79 46 L85 43"
         stroke="currentColor"
         strokeWidth="2.2"
         strokeLinecap="round"
       />
-      <circle cx="71" cy="46" r="1.8" fill="currentColor" />
+      <circle cx="72" cy="47" r="1.8" fill="currentColor" />
 
-      {/* Wave / terrain lines beneath both heads */}
+      {/* Wave lines beneath both heads */}
       <path
-        d="M16 74 Q27 68 38 74 T60 74 T84 74"
+        d="M14 74 Q25 68 36 74 T58 74 T82 74"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
       />
       <path
-        d="M20 82 Q31 76 42 82 T64 82 T86 82"
+        d="M18 82 Q29 76 40 82 T62 82 T84 82"
         stroke="currentColor"
         strokeWidth="1.6"
         strokeLinecap="round"

@@ -2,13 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import {
-  MapPin,
-  PawPrint,
-  Rabbit,
-  ScanLine,
-  TriangleAlert,
-} from "lucide-react";
+import { MapPin, PawPrint, ScanLine, TriangleAlert } from "lucide-react";
 import { PhoneFrame } from "@/components/phone-frame";
 import { AppHeader } from "@/components/app-header";
 import { BottomNav } from "@/components/bottom-nav";
@@ -33,11 +27,6 @@ export default function DashboardPage() {
   const total = dashboard?.totalLivestock ?? 0;
   const missingCount = dashboard?.missingCount ?? 0;
   const returned = total - missingCount;
-  const sheepCount = dashboard?.sheepCount ?? 0;
-  const goatCount = dashboard?.goatCount ?? 0;
-  const speciesTotal = sheepCount + goatCount;
-  const sheepPercent = speciesTotal > 0 ? Math.round((sheepCount / speciesTotal) * 100) : 0;
-  const goatPercent = speciesTotal > 0 ? 100 - sheepPercent : 0;
 
   return (
     <PhoneFrame>
@@ -107,25 +96,6 @@ export default function DashboardPage() {
                 <p className="text-xs text-gray-400">Өнөөдөр уншигдсан</p>
               </Card>
             </div>
-
-            {speciesTotal > 0 ? (
-              <div className="grid grid-cols-2 gap-3">
-                <Card className="flex-row items-center gap-3 bg-[#141a2c] p-4 ring-1 ring-white/5">
-                  <PawPrint className="size-5 text-[#f2a93c]" strokeWidth={1.75} />
-                  <div className="flex flex-col">
-                    <p className="text-base font-bold">{sheepPercent}%</p>
-                    <p className="text-xs text-gray-400">Хонь</p>
-                  </div>
-                </Card>
-                <Card className="flex-row items-center gap-3 bg-[#141a2c] p-4 ring-1 ring-white/5">
-                  <Rabbit className="size-5 text-[#f2a93c]" strokeWidth={1.75} />
-                  <div className="flex flex-col">
-                    <p className="text-base font-bold">{goatPercent}%</p>
-                    <p className="text-xs text-gray-400">Ямаа</p>
-                  </div>
-                </Card>
-              </div>
-            ) : null}
           </div>
 
           {dashboard && dashboard.recentScans.length > 0 ? (
