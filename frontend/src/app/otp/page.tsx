@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { PhoneFrame } from "@/components/phone-frame";
 import { BackButton } from "@/components/back-button";
 import { Button } from "@/components/ui/button";
@@ -10,11 +10,76 @@ import {
   InputOTPGroup,
   InputOTPSlot,
 } from "@/components/ui/input-otp";
+import { ApiError, sendOtp, verifyOtp } from "@/lib/api";
+import { saveSession } from "@/lib/session";
 
 const OTP_LENGTH = 6;
+const RESEND_COOLDOWN_SECONDS = 60;
 
 export default function OtpVerificationPage() {
+  return (
+    <Suspense fallback={<PhoneFrame>{null}</PhoneFrame>}>
+      <OtpVerificationForm />
+    </Suspense>
+  );
+}
+
+function OtpVerificationForm() {
+  const router = useRouter();
+  const phone = useSearchParams().get("phone") ?? "";
+
   const [code, setCode] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [resendSeconds, setResendSeconds] = useState(RESEND_COOLDOWN_SECONDS);
+  const [resending, setResending] = useState(false);
+
+  useEffect(() => {
+    if (!phone) {
+      router.replace("/phone");
+    }
+  }, [phone, router]);
+
+  useEffect(() => {
+    if (resendSeconds <= 0) return;
+    const timer = setInterval(() => setResendSeconds((s) => s - 1), 1000);
+    return () => clearInterval(timer);
+  }, [resendSeconds]);
+
+  const handleVerify = async (value: string) => {
+    if (value.length !== OTP_LENGTH || loading) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await verifyOtp(phone, value);
+      saveSession(result);
+      router.push(result.requiresProfileSetup ? "/herd-setup" : "/dashboard");
+    } catch (err) {
+      setCode("");
+      setError(
+        err instanceof ApiError ? err.message : "Сервертэй холбогдож чадсангүй."
+      );
+      setLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    if (resendSeconds > 0 || resending) return;
+    setResending(true);
+    setError(null);
+
+    try {
+      await sendOtp(phone);
+      setResendSeconds(RESEND_COOLDOWN_SECONDS);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Сервертэй холбогдож чадсангүй."
+      );
+    } finally {
+      setResending(false);
+    }
+  };
 
   return (
     <PhoneFrame>
@@ -23,14 +88,18 @@ export default function OtpVerificationPage() {
       <div className="mt-10 flex flex-col items-center gap-1 text-center">
         <p className="text-base font-medium">Баталгаажуулах код оруулна уу</p>
         <p className="text-sm text-gray-400">
-          +976 99123456 дугаарт код илгээлээ
+          {phone ? `+976 ${phone} дугаарт код илгээлээ` : " "}
         </p>
       </div>
 
       <InputOTP
         maxLength={OTP_LENGTH}
         value={code}
-        onChange={setCode}
+        onChange={(value) => {
+          setCode(value);
+          if (value.length === OTP_LENGTH) handleVerify(value);
+        }}
+        disabled={loading}
         containerClassName="mt-8 justify-center gap-2"
       >
         <InputOTPGroup className="gap-2">
@@ -44,17 +113,32 @@ export default function OtpVerificationPage() {
         </InputOTPGroup>
       </InputOTP>
 
-      <p className="mt-6 text-center text-sm text-gray-400">
-        Дахин код авах <span className="text-gray-300">(0:58)</span>
-      </p>
+      {error ? (
+        <p className="mt-4 text-center text-sm text-red-400">{error}</p>
+      ) : null}
+
+      <button
+        type="button"
+        onClick={handleResend}
+        disabled={resendSeconds > 0 || resending}
+        className="mt-6 text-center text-sm text-gray-400 disabled:cursor-not-allowed"
+      >
+        {resending ? "Дахин илгээж байна..." : "Дахин код авах"}{" "}
+        {resendSeconds > 0 ? (
+          <span className="text-gray-300">
+            (0:{resendSeconds.toString().padStart(2, "0")})
+          </span>
+        ) : null}
+      </button>
 
       <Button
         variant="brand-muted"
         size="xl"
         className="mt-auto w-full"
-        render={<Link href="/herd-setup" />}
+        disabled={code.length !== OTP_LENGTH || loading}
+        onClick={() => handleVerify(code)}
       >
-        Баталгаажуулах
+        {loading ? "Шалгаж байна..." : "Баталгаажуулах"}
       </Button>
     </PhoneFrame>
   );

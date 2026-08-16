@@ -1,12 +1,41 @@
-import Link from "next/link";
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { MessageSquareText } from "lucide-react";
 import { PhoneFrame } from "@/components/phone-frame";
 import { BackButton } from "@/components/back-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ApiError, sendOtp } from "@/lib/api";
+
+const PHONE_LENGTH = 8;
 
 export default function PhoneEntryPage() {
+  const router = useRouter();
+  const [phone, setPhone] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const isValid = phone.length === PHONE_LENGTH;
+
+  const handleSubmit = async () => {
+    if (!isValid || loading) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      await sendOtp(phone);
+      router.push(`/otp?phone=${phone}`);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Сервертэй холбогдож чадсангүй."
+      );
+      setLoading(false);
+    }
+  };
+
   return (
     <PhoneFrame>
       <BackButton href="/" />
@@ -24,12 +53,22 @@ export default function PhoneEntryPage() {
         <Label htmlFor="phone" className="text-sm text-gray-300">
           Утасны дугаар
         </Label>
-        <Input
-          id="phone"
-          type="tel"
-          placeholder="976 0000 0000"
-          className="h-14 border-[#f2a93c]/40 bg-[#161c2c] px-4 py-0 text-base text-white placeholder:text-gray-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
-        />
+        <div className="flex h-14 items-center rounded-2xl border border-[#f2a93c]/40 bg-[#161c2c] focus-within:border-[#f2a93c]">
+          <span className="pl-4 pr-1 text-base text-gray-400">+976</span>
+          <Input
+            id="phone"
+            type="tel"
+            inputMode="numeric"
+            autoFocus
+            value={phone}
+            onChange={(e) =>
+              setPhone(e.target.value.replace(/\D/g, "").slice(0, PHONE_LENGTH))
+            }
+            placeholder="99123456"
+            className="h-full flex-1 border-none bg-transparent px-0 pr-4 py-0 text-base text-white placeholder:text-gray-500 focus-visible:ring-0"
+          />
+        </div>
+        {error ? <p className="text-sm text-red-400">{error}</p> : null}
       </div>
 
       <div className="mt-auto flex flex-col gap-4">
@@ -42,9 +81,10 @@ export default function PhoneEntryPage() {
           variant="brand-muted"
           size="xl"
           className="w-full"
-          render={<Link href="/otp" />}
+          disabled={!isValid || loading}
+          onClick={handleSubmit}
         >
-          Код авах
+          {loading ? "Илгээж байна..." : "Код авах"}
         </Button>
       </div>
     </PhoneFrame>
