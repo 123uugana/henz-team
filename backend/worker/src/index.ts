@@ -14,6 +14,7 @@ import {
   rfidScans,
   rfidTagRegistry,
   rfidTags,
+  rfidUnknownEpcs,
   users,
 } from './db/schema';
 
@@ -44,6 +45,7 @@ const OTP_RESEND_COOLDOWN_MS = 60_000;
 const OTP_MAX_ATTEMPTS = 5;
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const RECENT_SCANS_LIMIT = 50;
+const DUPLICATE_SCAN_WINDOW_MS = 30_000;
 
 const jsonHeaders = {
   'Access-Control-Allow-Headers': 'Authorization, Content-Type',
@@ -92,12 +94,15 @@ const pushTokenSchema = z.object({
 const registerReaderSchema = z.object({
   id: z.string().trim().min(1),
   name: z.string().trim().min(1),
+  location: z.string().trim().optional(),
+  deviceSecret: z.string().min(8).optional(),
 });
 
 const scanInputSchema = z.object({
   epc: z.string().trim().min(1),
   direction: z.enum(['ENTER', 'EXIT', 'UNKNOWN']).optional(),
   readerId: z.string().trim().optional(),
+  scannedAt: z.string().trim().optional(),
 });
 
 const ingestScansSchema = z.object({
@@ -138,6 +143,12 @@ const HISTORY_RANGE_DAYS: Record<(typeof HISTORY_RANGES)[number], number> = {
   '6m': 180,
   '1y': 365,
 };
+
+const deviceIngestScansSchema = z.object({
+  readerId: z.string().trim().min(1),
+  secret: z.string().min(1),
+  scans: z.array(scanInputSchema.omit({ readerId: true })).min(1),
+});
 
 class ApiFailure extends Error {
   constructor(
@@ -412,6 +423,28 @@ async function getAuthUser(request: Request, db: ReturnType<typeof drizzle>, env
 function cleanOptionalText(value?: string | null) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeEpc(epc: string) {
+  return epc.trim().toUpperCase();
+}
+
+function normalizeReaderId(readerId?: string | null) {
+  return cleanOptionalText(readerId) ?? null;
+}
+
+function scanTimestamp(value: string | undefined, fallback: number) {
+  if (!value) {
+    return new Date(fallback).toISOString();
+  }
+
+  const timestamp = new Date(value);
+
+  if (Number.isNaN(timestamp.getTime())) {
+    throw new ApiFailure(400, 'Scan timestamp буруу байна.', 'BAD_SCAN_TIMESTAMP');
+  }
+
+  return timestamp.toISOString();
 }
 
 function livestockResponse(
@@ -1179,6 +1212,8 @@ async function handleRegisterReader(
   const timestamp = now();
   const readerId = input.id.trim();
   const readerName = input.name.trim();
+  const location = cleanOptionalText(input.location);
+  const deviceSecretHash = input.deviceSecret ? await sha256(input.deviceSecret) : undefined;
 
   const existing = await db.select().from(rfidReaders).where(eq(rfidReaders.id, readerId)).get();
 
@@ -1189,28 +1224,111 @@ async function handleRegisterReader(
   if (existing) {
     await db
       .update(rfidReaders)
-      .set({ name: readerName, updatedAt: timestamp })
+      .set({
+        name: readerName,
+        location,
+        ...(deviceSecretHash ? { deviceSecretHash } : {}),
+        updatedAt: timestamp,
+      })
       .where(eq(rfidReaders.id, readerId));
   } else {
     await db.insert(rfidReaders).values({
       id: readerId,
       userId,
       name: readerName,
+      location,
+      deviceSecretHash: deviceSecretHash ?? null,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
   }
 
-  return apiResponse({ id: readerId, name: readerName });
+  return apiResponse({
+    id: readerId,
+    name: readerName,
+    ...(location ? { location } : {}),
+    ...(deviceSecretHash ? { deviceSecretSet: true } : {}),
+  });
 }
 
-async function handleIngestScans(
-  request: Request,
+async function findRecentDuplicateScan(
   db: ReturnType<typeof drizzle>,
   userId: string,
+  readerId: string | null,
+  epc: string,
+  scannedAt: string,
 ) {
-  const input = await parseJson(request, ingestScansSchema);
-  const lowerEpcs = [...new Set(input.scans.map((scan) => scan.epc.toLowerCase()))];
+  const cutoff = new Date(
+    new Date(scannedAt).getTime() - DUPLICATE_SCAN_WINDOW_MS,
+  ).toISOString();
+
+  return db
+    .select()
+    .from(rfidScans)
+    .where(
+      and(
+        eq(rfidScans.userId, userId),
+        readerId ? eq(rfidScans.readerId, readerId) : isNull(rfidScans.readerId),
+        sql`lower(${rfidScans.epc}) = ${epc.toLowerCase()}`,
+        sql`${rfidScans.scannedAt} >= ${cutoff}`,
+      ),
+    )
+    .orderBy(desc(rfidScans.scannedAt))
+    .limit(1)
+    .get();
+}
+
+async function trackUnknownEpc(
+  db: ReturnType<typeof drizzle>,
+  userId: string,
+  epc: string,
+  readerId: string | null,
+  scannedAt: string,
+) {
+  const existing = await db
+    .select()
+    .from(rfidUnknownEpcs)
+    .where(and(eq(rfidUnknownEpcs.userId, userId), eq(rfidUnknownEpcs.epc, epc)))
+    .get();
+
+  if (existing) {
+    await db
+      .update(rfidUnknownEpcs)
+      .set({
+        readerId,
+        lastSeenAt: scannedAt,
+        seenCount: existing.seenCount + 1,
+      })
+      .where(eq(rfidUnknownEpcs.id, existing.id));
+    return;
+  }
+
+  await db.insert(rfidUnknownEpcs).values({
+    id: createId('unknown_epc'),
+    userId,
+    epc,
+    readerId,
+    firstSeenAt: scannedAt,
+    lastSeenAt: scannedAt,
+    seenCount: 1,
+  });
+}
+
+async function ingestScanBatch(
+  db: ReturnType<typeof drizzle>,
+  userId: string,
+  scans: z.infer<typeof scanInputSchema>[],
+  options?: {
+    source?: 'APP' | 'DEVICE';
+    readerId?: string;
+  },
+) {
+  const normalizedScans = scans.map((scan) => ({
+    ...scan,
+    epc: normalizeEpc(scan.epc),
+    readerId: normalizeReaderId(options?.readerId ?? scan.readerId),
+  }));
+  const lowerEpcs = [...new Set(normalizedScans.map((scan) => scan.epc.toLowerCase()))];
 
   const tags = await db
     .select()
@@ -1225,7 +1343,7 @@ async function handleIngestScans(
   // otherwise fail the insert), and drop the link — but keep the scan — for
   // a reader id already owned by a different user rather than reassigning it.
   const readerIds = [
-    ...new Set(input.scans.map((scan) => scan.readerId).filter((id): id is string => !!id)),
+    ...new Set(normalizedScans.map((scan) => scan.readerId).filter((id): id is string => !!id)),
   ];
   const resolvedReaderId = new Map<string, string | null>();
 
@@ -1260,11 +1378,26 @@ async function handleIngestScans(
   const baseTime = Date.now();
   let known = 0;
   let unknown = 0;
+  let inserted = 0;
+  let duplicates = 0;
   const unknownEpcs: string[] = [];
 
-  for (let i = 0; i < input.scans.length; i += 1) {
-    const scan = input.scans[i];
+  for (let i = 0; i < normalizedScans.length; i += 1) {
+    const scan = normalizedScans[i];
     const tag = tagByLowerEpc.get(scan.epc.toLowerCase());
+    const scannedAt = scanTimestamp(scan.scannedAt, baseTime + i);
+    const duplicate = await findRecentDuplicateScan(
+      db,
+      userId,
+      scan.readerId,
+      scan.epc,
+      scannedAt,
+    );
+
+    if (duplicate) {
+      duplicates += 1;
+      continue;
+    }
 
     await db.insert(rfidScans).values({
       id: createId('scan'),
@@ -1273,8 +1406,11 @@ async function handleIngestScans(
       readerId: scan.readerId ? (resolvedReaderId.get(scan.readerId) ?? null) : null,
       epc: scan.epc,
       direction: scan.direction ?? 'UNKNOWN',
-      scannedAt: new Date(baseTime + i).toISOString(),
+      source: options?.source ?? 'APP',
+      duplicateOfScanId: null,
+      scannedAt,
     });
+    inserted += 1;
 
     if (tag) {
       known += 1;
@@ -1283,14 +1419,47 @@ async function handleIngestScans(
       if (!unknownEpcs.includes(scan.epc)) {
         unknownEpcs.push(scan.epc);
       }
+      await trackUnknownEpc(db, userId, scan.epc, scan.readerId, scannedAt);
     }
   }
 
   return apiResponse({
-    accepted: input.scans.length,
+    accepted: scans.length,
+    inserted,
+    duplicates,
     known,
     unknown,
     unknownEpcs,
+  });
+}
+
+async function handleIngestScans(
+  request: Request,
+  db: ReturnType<typeof drizzle>,
+  userId: string,
+) {
+  const input = await parseJson(request, ingestScansSchema);
+  return ingestScanBatch(db, userId, input.scans);
+}
+
+async function handleDeviceIngestScans(request: Request, db: ReturnType<typeof drizzle>) {
+  const input = await parseJson(request, deviceIngestScansSchema);
+  const readerId = input.readerId.trim();
+  const reader = await db.select().from(rfidReaders).where(eq(rfidReaders.id, readerId)).get();
+
+  if (!reader?.deviceSecretHash) {
+    throw new ApiFailure(401, 'Төхөөрөмжийн эрх буруу байна.', 'INVALID_DEVICE_SECRET');
+  }
+
+  const secretHash = await sha256(input.secret);
+
+  if (secretHash !== reader.deviceSecretHash) {
+    throw new ApiFailure(401, 'Төхөөрөмжийн эрх буруу байна.', 'INVALID_DEVICE_SECRET');
+  }
+
+  return ingestScanBatch(db, reader.userId, input.scans, {
+    source: 'DEVICE',
+    readerId,
   });
 }
 
@@ -1461,72 +1630,210 @@ async function handleHistory(request: Request, db: ReturnType<typeof drizzle>, u
 
 async function handleDashboard(db: ReturnType<typeof drizzle>, userId: string) {
   const today = new Date().toISOString().slice(0, 10);
-  const total = await db
-    .select({ value: count() })
-    .from(livestock)
-    .where(eq(livestock.userId, userId))
-    .get();
-  const missing = await db
-    .select({ value: count() })
-    .from(livestock)
-    .where(and(eq(livestock.userId, userId), eq(livestock.status, 'MISSING')))
-    .get();
-  const unknownTags = await db
-    .select({ value: count() })
-    .from(livestock)
-    .leftJoin(rfidTags, eq(rfidTags.livestockId, livestock.id))
-    .where(and(eq(livestock.userId, userId), isNull(rfidTags.id)))
-    .get();
-  const scannedToday = await db
-    .select({ value: count() })
-    .from(rfidScans)
-    .where(and(eq(rfidScans.userId, userId), like(rfidScans.scannedAt, `${today}%`)))
-    .get();
-  const sheepCount = await db
-    .select({ value: count() })
-    .from(livestock)
-    .where(and(eq(livestock.userId, userId), eq(livestock.species, 'SHEEP')))
-    .get();
-  const goatCount = await db
-    .select({ value: count() })
-    .from(livestock)
-    .where(and(eq(livestock.userId, userId), eq(livestock.species, 'GOAT')))
-    .get();
-  const recentScans = await db
-    .select({
-      id: rfidScans.id,
-      scannedAt: rfidScans.scannedAt,
-      direction: rfidScans.direction,
-      epc: rfidScans.epc,
-      livestockId: livestock.id,
-      earNumber: livestock.earNumber,
-      name: livestock.name,
-    })
-    .from(rfidScans)
-    .innerJoin(livestock, eq(livestock.id, rfidScans.livestockId))
-    .where(eq(rfidScans.userId, userId))
-    .orderBy(desc(rfidScans.scannedAt))
-    .limit(4)
-    .all();
+  const [
+    total,
+    missing,
+    untagged,
+    sheepCount,
+    goatCount,
+    scansToday,
+    recentScans,
+    readers,
+  ] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(livestock)
+      .where(eq(livestock.userId, userId))
+      .get(),
+    db
+      .select({ value: count() })
+      .from(livestock)
+      .where(and(eq(livestock.userId, userId), eq(livestock.status, 'MISSING')))
+      .get(),
+    db
+      .select({ value: count() })
+      .from(livestock)
+      .leftJoin(rfidTags, eq(rfidTags.livestockId, livestock.id))
+      .where(and(eq(livestock.userId, userId), isNull(rfidTags.id)))
+      .get(),
+    db
+      .select({ value: count() })
+      .from(livestock)
+      .where(and(eq(livestock.userId, userId), eq(livestock.species, 'SHEEP')))
+      .get(),
+    db
+      .select({ value: count() })
+      .from(livestock)
+      .where(and(eq(livestock.userId, userId), eq(livestock.species, 'GOAT')))
+      .get(),
+    db
+      .select()
+      .from(rfidScans)
+      .where(and(eq(rfidScans.userId, userId), like(rfidScans.scannedAt, `${today}%`)))
+      .orderBy(desc(rfidScans.scannedAt))
+      .all(),
+    db
+      .select({
+        id: rfidScans.id,
+        scannedAt: rfidScans.scannedAt,
+        readerId: rfidScans.readerId,
+        epc: rfidScans.epc,
+        direction: rfidScans.direction,
+        source: rfidScans.source,
+        livestockId: rfidScans.livestockId,
+        earNumber: livestock.earNumber,
+        name: livestock.name,
+      })
+      .from(rfidScans)
+      .leftJoin(livestock, eq(livestock.id, rfidScans.livestockId))
+      .where(eq(rfidScans.userId, userId))
+      .orderBy(desc(rfidScans.scannedAt))
+      .limit(6)
+      .all(),
+    db
+      .select()
+      .from(rfidReaders)
+      .where(eq(rfidReaders.userId, userId))
+      .orderBy(rfidReaders.name)
+      .all(),
+  ]);
+
+  const totalLivestock = total?.value ?? 0;
+  const scannedLivestockIds = new Set(
+    scansToday
+      .map((scan) => scan.livestockId)
+      .filter((livestockId): livestockId is string => Boolean(livestockId)),
+  );
+  const unknownEpcsToday = [
+    ...new Set(scansToday.filter((scan) => !scan.livestockId).map((scan) => scan.epc)),
+  ];
+
+  const readersWithStatus = await Promise.all(
+    readers.map(async (reader) => {
+      const lastScan = await db
+        .select({
+          scannedAt: rfidScans.scannedAt,
+          direction: rfidScans.direction,
+          epc: rfidScans.epc,
+        })
+        .from(rfidScans)
+        .where(and(eq(rfidScans.userId, userId), eq(rfidScans.readerId, reader.id)))
+        .orderBy(desc(rfidScans.scannedAt))
+        .limit(1)
+        .get();
+
+      return {
+        id: reader.id,
+        name: reader.name,
+        location: reader.location ?? undefined,
+        deviceSecretSet: Boolean(reader.deviceSecretHash),
+        lastScanAt: lastScan?.scannedAt,
+        lastDirection: lastScan?.direction,
+        lastEpc: lastScan?.epc,
+        isActiveToday: Boolean(lastScan?.scannedAt.startsWith(today)),
+      };
+    }),
+  );
 
   return apiResponse({
-    totalLivestock: total?.value ?? 0,
-    scannedToday: scannedToday?.value ?? 0,
+    totalLivestock,
+    scannedToday: scansToday.length,
     missingCount: missing?.value ?? 0,
-    unknownTagCount: unknownTags?.value ?? 0,
     sheepCount: sheepCount?.value ?? 0,
     goatCount: goatCount?.value ?? 0,
+    unknownTagCount: untagged?.value ?? 0,
+    readerCount: readers.length,
+    activeReaderCount: readersWithStatus.filter((reader) => reader.isActiveToday).length,
+    today: {
+      date: today,
+      totalScans: scansToday.length,
+      scannedLivestock: scannedLivestockIds.size,
+      unscannedLivestock: Math.max(totalLivestock - scannedLivestockIds.size, 0),
+      entered: scansToday.filter((scan) => scan.direction === 'ENTER').length,
+      exited: scansToday.filter((scan) => scan.direction === 'EXIT').length,
+      unknown: unknownEpcsToday.length,
+      unknownEpcs: unknownEpcsToday,
+      lastScan: scansToday[0]
+        ? {
+            id: scansToday[0].id,
+            epc: scansToday[0].epc,
+            livestockId: scansToday[0].livestockId,
+            readerId: scansToday[0].readerId,
+            direction: scansToday[0].direction,
+            source: scansToday[0].source,
+            scannedAt: scansToday[0].scannedAt,
+          }
+        : null,
+    },
+    readers: readersWithStatus,
     recentScans: recentScans.map((scan) => ({
       id: scan.id,
-      scannedAt: scan.scannedAt,
-      direction: scan.direction,
       epc: scan.epc,
-      livestock: {
-        id: scan.livestockId,
-        earNumber: scan.earNumber,
-        name: scan.name ?? undefined,
-      },
+      readerId: scan.readerId,
+      direction: scan.direction,
+      source: scan.source,
+      scannedAt: scan.scannedAt,
+      livestock: scan.livestockId
+        ? {
+            id: scan.livestockId,
+            earNumber: scan.earNumber,
+            name: scan.name ?? undefined,
+          }
+        : null,
     })),
+  });
+}
+
+async function handleDailyCounts(request: Request, db: ReturnType<typeof drizzle>, userId: string) {
+  const requestedDate = new URL(request.url).searchParams.get('date');
+  const date = requestedDate ?? new Date().toISOString().slice(0, 10);
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new ApiFailure(400, 'Огноо буруу байна.', 'BAD_DATE');
+  }
+
+  const [livestockRows, scans, missing] = await Promise.all([
+    db.select({ id: livestock.id }).from(livestock).where(eq(livestock.userId, userId)).all(),
+    db
+      .select()
+      .from(rfidScans)
+      .where(and(eq(rfidScans.userId, userId), like(rfidScans.scannedAt, `${date}%`)))
+      .orderBy(desc(rfidScans.scannedAt))
+      .all(),
+    db
+      .select({ value: count() })
+      .from(livestock)
+      .where(and(eq(livestock.userId, userId), eq(livestock.status, 'MISSING')))
+      .get(),
+  ]);
+
+  const scannedLivestockIds = new Set(
+    scans
+      .map((scan) => scan.livestockId)
+      .filter((livestockId): livestockId is string => Boolean(livestockId)),
+  );
+  const unknownEpcs = [...new Set(scans.filter((scan) => !scan.livestockId).map((scan) => scan.epc))];
+
+  return apiResponse({
+    date,
+    totalLivestock: livestockRows.length,
+    scannedLivestock: scannedLivestockIds.size,
+    unscannedLivestock: Math.max(livestockRows.length - scannedLivestockIds.size, 0),
+    entered: scans.filter((scan) => scan.direction === 'ENTER').length,
+    exited: scans.filter((scan) => scan.direction === 'EXIT').length,
+    unknown: unknownEpcs.length,
+    unknownEpcs,
+    missing: missing?.value ?? 0,
+    lastScan: scans[0]
+      ? {
+          id: scans[0].id,
+          epc: scans[0].epc,
+          livestockId: scans[0].livestockId,
+          readerId: scans[0].readerId,
+          direction: scans[0].direction,
+          scannedAt: scans[0].scannedAt,
+        }
+      : null,
   });
 }
 
@@ -1940,6 +2247,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
     return handleRefresh(request, db, env);
   }
 
+  if (request.method === 'POST' && path === '/api/devices/scans') {
+    return handleDeviceIngestScans(request, db);
+  }
+
   const user = await getAuthUser(request, db, env);
 
   if (request.method === 'GET' && path === '/api/auth/me') {
@@ -1952,6 +2263,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
 
   if (request.method === 'GET' && path === '/api/dashboard') {
     return handleDashboard(db, user.id);
+  }
+
+  if (request.method === 'GET' && path === '/api/counts/daily') {
+    return handleDailyCounts(request, db, user.id);
   }
 
   if (request.method === 'GET' && path === '/api/reports/missing') {

@@ -388,6 +388,137 @@ describe('rfid device integration', () => {
     expect(livestockScans.body.data).toHaveLength(2);
   });
 
+  it('accepts device scans, filters duplicates and summarizes daily counts', async () => {
+    const tokens = await registerAndLogin('99398877');
+    const auth = tokens.accessToken;
+    const readerId = 'hh100-gate-summary';
+    const countDate = new Date().toISOString().slice(0, 10);
+
+    const reader = await api(
+      '/api/devices/readers',
+      json(
+        'POST',
+        {
+          id: readerId,
+          name: 'Зүүн хаалга',
+          location: 'Зүүн хашаа',
+          deviceSecret: 'device-secret-123',
+        },
+        auth,
+      ),
+    );
+    expect(reader.status).toBe(200);
+    expect(reader.body.data).toMatchObject({
+      id: readerId,
+      location: 'Зүүн хашаа',
+      deviceSecretSet: true,
+    });
+
+    const tagged = await api(
+      '/api/livestock',
+      json(
+        'POST',
+        { earNumber: 'S-100', species: 'SHEEP', gender: 'FEMALE', rfidEpc: 'E280-SUMMARY-1' },
+        auth,
+      ),
+    );
+    expect(tagged.status).toBe(200);
+
+    const untagged = await api(
+      '/api/livestock',
+      json('POST', { earNumber: 'S-101', species: 'GOAT', gender: 'MALE' }, auth),
+    );
+    expect(untagged.status).toBe(200);
+
+    const badSecret = await api(
+      '/api/devices/scans',
+      json('POST', { readerId, secret: 'wrong-secret', scans: [{ epc: 'E280-SUMMARY-1' }] }),
+    );
+    expect(badSecret.status).toBe(401);
+
+    const ingest = await api(
+      '/api/devices/scans',
+      json('POST', {
+        readerId,
+        secret: 'device-secret-123',
+        scans: [
+          { epc: 'e280-summary-1', direction: 'ENTER', scannedAt: `${countDate}T00:00:00.000Z` },
+          { epc: 'E280-SUMMARY-1', direction: 'EXIT', scannedAt: `${countDate}T00:00:10.000Z` },
+          {
+            epc: 'E280-SUMMARY-UNKNOWN',
+            direction: 'EXIT',
+            scannedAt: `${countDate}T00:01:00.000Z`,
+          },
+        ],
+      }),
+    );
+    expect(ingest.status).toBe(200);
+    expect(ingest.body.data).toMatchObject({
+      accepted: 3,
+      inserted: 2,
+      duplicates: 1,
+      known: 1,
+      unknown: 1,
+      unknownEpcs: ['E280-SUMMARY-UNKNOWN'],
+    });
+
+    const summary = await api(`/api/counts/daily?date=${countDate}`, authorized(auth));
+    expect(summary.status).toBe(200);
+    expect(summary.body.data).toMatchObject({
+      date: countDate,
+      totalLivestock: 2,
+      scannedLivestock: 1,
+      unscannedLivestock: 1,
+      entered: 1,
+      exited: 1,
+      unknown: 1,
+      unknownEpcs: ['E280-SUMMARY-UNKNOWN'],
+    });
+    expect(summary.body.data.lastScan).toMatchObject({
+      epc: 'E280-SUMMARY-UNKNOWN',
+      readerId,
+      direction: 'EXIT',
+    });
+
+    const dashboard = await api('/api/dashboard', authorized(auth));
+    expect(dashboard.status).toBe(200);
+    expect(dashboard.body.data).toMatchObject({
+      totalLivestock: 2,
+      scannedToday: 2,
+      readerCount: 1,
+      activeReaderCount: 1,
+      today: {
+        date: countDate,
+        totalScans: 2,
+        scannedLivestock: 1,
+        unscannedLivestock: 1,
+        entered: 1,
+        exited: 1,
+        unknown: 1,
+        unknownEpcs: ['E280-SUMMARY-UNKNOWN'],
+      },
+      readers: [
+        {
+          id: readerId,
+          name: 'Зүүн хаалга',
+          location: 'Зүүн хашаа',
+          deviceSecretSet: true,
+          isActiveToday: true,
+        },
+      ],
+    });
+    expect(dashboard.body.data.today.lastScan).toMatchObject({
+      epc: 'E280-SUMMARY-UNKNOWN',
+      readerId,
+      direction: 'EXIT',
+      source: 'DEVICE',
+    });
+    expect(dashboard.body.data.recentScans[0]).toMatchObject({
+      epc: 'E280-SUMMARY-UNKNOWN',
+      livestock: null,
+    });
+  });
+
   it('rejects an invalid batch', async () => {
     const tokens = await registerAndLogin('99210011');
     const auth = tokens.accessToken;

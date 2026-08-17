@@ -66,7 +66,8 @@ POST  /api/auth/refresh             rotate refresh token
 GET   /api/auth/me                  current user
 PATCH /api/auth/me                  update profile (name)
 
-GET   /api/dashboard                farmer dashboard summary
+GET   /api/dashboard                farmer dashboard summary with RFID overview
+GET   /api/counts/daily             daily RFID count summary (?date=YYYY-MM-DD)
 GET   /api/reports/missing          missing livestock list
 GET   /api/reports/history          movement history (?range=7d|1m|3m|6m|1y)
 
@@ -85,7 +86,8 @@ PATCH /api/alerts/:id/read          mark one read
 
 POST  /api/devices/push-token       register Expo push token
 POST  /api/devices/readers          register an RFID reader
-POST  /api/scans                    ingest RFID scans (batch, device-facing)
+POST  /api/devices/scans            ingest RFID scans from a reader secret
+POST  /api/scans                    ingest RFID scans from the mobile app
 GET   /api/scans                    recent scans with livestock info
 POST  /api/uploads                  upload a livestock image
 
@@ -110,11 +112,37 @@ PATCH /api/admin/tags/:epc/unlock   reset a tag back to AVAILABLE (ADMIN only)
 The system supports two reader types:
 
 - **HH100** (Android integrated reader, Impinj E710): use its HTTP POST mode to
-  send scan events straight to `POST /api/scans`.
+  send scan events straight to `POST /api/devices/scans`.
 - **HL7202K8** (Bluetooth handheld, Indy R2000): pair it with a phone/tablet app
   over Bluetooth and have the app forward reads to `POST /api/scans`.
 
-`POST /api/scans` takes an authenticated batch of scans:
+Register a reader with a stable id, location, and optional device secret:
+
+```bash
+curl -X POST $BASE/api/devices/readers -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{
+    "id":"hh100-gate-01",
+    "name":"Хашаа 1 уншигч",
+    "location":"Зүүн хаалга",
+    "deviceSecret":"device-secret-123"
+  }'
+```
+
+`POST /api/devices/scans` is for fixed readers such as HH100. It does not use a
+user bearer token; it authenticates with the reader secret:
+
+```bash
+curl -X POST $BASE/api/devices/scans -H 'Content-Type: application/json' -d '{
+  "readerId": "hh100-gate-01",
+  "secret": "device-secret-123",
+  "scans": [
+    { "epc": "E280-1160B00010100254", "direction": "ENTER" },
+    { "epc": "E280-1160B00010100277", "direction": "EXIT" }
+  ]
+}'
+```
+
+`POST /api/scans` is for the authenticated mobile app or handheld-sync flow:
 
 ```bash
 curl -X POST $BASE/api/scans -H "$AUTH" -H 'Content-Type: application/json' -d '{
@@ -131,19 +159,28 @@ curl -X POST $BASE/api/scans -H "$AUTH" -H 'Content-Type: application/json' -d '
 - EPCs are matched case-insensitively and stored uppercase.
 - Scans whose EPC is registered to the user are linked to the livestock;
   unrecognized EPCs are still stored and reported back via `unknownEpcs`.
-- `readerId` is created automatically on first use and attributed to the user.
-  A reader id registered by another user is not reassigned (the scan is stored
-  without a reader link).
-- A batch is capped at 100 scans.
-
-Register a reader explicitly to give it a display name:
-
-```bash
-curl -X POST $BASE/api/devices/readers -H "$AUTH" -H 'Content-Type: application/json' \
-  -d '{"id":"hh100-01","name":"Хашаа 1 уншигч"}'
-```
+- Duplicate scans with the same `readerId + epc` inside 30 seconds are ignored
+  and counted in the response as `duplicates`.
+- Unrecognized EPCs are tracked in `rfid_unknown_epcs` so they can be linked to
+  livestock later.
 
 Registering the same id for another user returns `409 READER_ALREADY_REGISTERED`.
+
+Daily count summary:
+
+```bash
+curl "$BASE/api/counts/daily?date=2026-08-14" -H "$AUTH"
+```
+
+The response includes total livestock, scanned livestock, unscanned livestock,
+ENTER/EXIT counts, unknown EPCs, missing count, and the last scan.
+
+The main dashboard endpoint also includes today's scan summary, active reader
+status, recent scans, and unknown EPCs:
+
+```bash
+curl "$BASE/api/dashboard" -H "$AUTH"
+```
 
 ## Notes
 
@@ -168,8 +205,8 @@ npm run test:watch  # watch mode
 
 `worker/tests/api.test.ts` covers the auth flow (OTP + refresh rotation + theft
 detection), livestock CRUD (including duplicate `409`s and pagination), status
-alerts, push-token registration, RFID reader registration + scan ingestion and
-the admin guard.
+alerts, push-token registration, RFID reader registration, device-secret scan
+ingestion, duplicate filtering, daily count summaries and the admin guard.
 
 ## Manual smoke test
 
@@ -230,6 +267,56 @@ Apply migrations to the remote D1 database:
 
 ```bash
 npx wrangler d1 migrations apply hents-hurag --remote --config wrangler.toml
+```
+
+Apply migrations locally:
+
+```bash
+npm run db:migrate:local
+```
+
+## Cloudflare D1 Studio demo data
+
+To make the Cloudflare D1 Studio tables useful while testing, load demo livestock,
+RFID tags, readers, scans, unknown EPCs, and alerts:
+
+```bash
+npm run db:migrate:local
+npm run db:seed:local
+```
+
+For the remote Cloudflare D1 database, apply migrations first, then seed:
+
+```bash
+npm run db:migrate
+npm run db:seed:remote
+```
+
+The demo reader id and secret are:
+
+```text
+readerId: hh100-gate-01
+secret: device-secret-123
+```
+
+Useful D1 Studio queries:
+
+```sql
+SELECT status, COUNT(*) AS total
+FROM livestock
+WHERE user_id = 'user_demo_1'
+GROUP BY status;
+
+SELECT direction, COUNT(*) AS total
+FROM rfid_scans
+WHERE user_id = 'user_demo_1'
+  AND scanned_at LIKE date('now') || '%'
+GROUP BY direction;
+
+SELECT epc, reader_id, seen_count, last_seen_at
+FROM rfid_unknown_epcs
+WHERE user_id = 'user_demo_1'
+ORDER BY last_seen_at DESC;
 ```
 
 ## Run
