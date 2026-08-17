@@ -251,6 +251,20 @@ export function getLivestockScans(id: string) {
   return authorizedFetch<ScanRecord[]>(`/api/livestock/${id}/scans`);
 }
 
+export interface RecentScan {
+  id: string;
+  epc: string;
+  direction: "ENTER" | "EXIT" | "UNKNOWN";
+  scannedAt: string;
+  reader: { id: string; name: string } | null;
+  livestock: { id: string; earNumber: string; name?: string } | null;
+}
+
+/** Recent scans across all readers, including ones whose tag isn't one of mine. */
+export function listScans() {
+  return authorizedFetch<RecentScan[]>("/api/scans");
+}
+
 // --- Dashboard / reports -------------------------------------------------------
 
 export interface DashboardScan {
@@ -279,6 +293,9 @@ export interface MissingLivestockEntry {
   id: string;
   earNumber: string;
   name?: string;
+  species: Species;
+  markDescription?: string;
+  imageUrl: string | null;
   lastSeenAt?: string;
 }
 

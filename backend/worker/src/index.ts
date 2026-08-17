@@ -1208,6 +1208,44 @@ async function handleIngestScans(
     .all();
 
   const tagByLowerEpc = new Map(tags.map((tag) => [tag.epc.toLowerCase(), tag]));
+
+  // Resolve reader ids referenced by this batch: auto-create ones seen for
+  // the first time (readerId is a foreign key, so an unregistered id would
+  // otherwise fail the insert), and drop the link — but keep the scan — for
+  // a reader id already owned by a different user rather than reassigning it.
+  const readerIds = [
+    ...new Set(input.scans.map((scan) => scan.readerId).filter((id): id is string => !!id)),
+  ];
+  const resolvedReaderId = new Map<string, string | null>();
+
+  if (readerIds.length > 0) {
+    const existingReaders = await db
+      .select()
+      .from(rfidReaders)
+      .where(inArray(rfidReaders.id, readerIds))
+      .all();
+    const existingById = new Map(existingReaders.map((reader) => [reader.id, reader]));
+    const timestamp = now();
+
+    for (const readerId of readerIds) {
+      const existing = existingById.get(readerId);
+
+      if (existing) {
+        resolvedReaderId.set(readerId, existing.userId === userId ? readerId : null);
+        continue;
+      }
+
+      await db.insert(rfidReaders).values({
+        id: readerId,
+        userId,
+        name: readerId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      resolvedReaderId.set(readerId, readerId);
+    }
+  }
+
   const baseTime = Date.now();
   let known = 0;
   let unknown = 0;
@@ -1221,7 +1259,7 @@ async function handleIngestScans(
       id: createId('scan'),
       userId,
       livestockId: tag?.livestockId ?? null,
-      readerId: scan.readerId || null,
+      readerId: scan.readerId ? (resolvedReaderId.get(scan.readerId) ?? null) : null,
       epc: scan.epc,
       direction: scan.direction ?? 'UNKNOWN',
       scannedAt: new Date(baseTime + i).toISOString(),
@@ -1349,6 +1387,9 @@ async function handleMissingLivestock(db: ReturnType<typeof drizzle>, userId: st
         id: row.id,
         earNumber: row.earNumber,
         name: row.name ?? undefined,
+        species: row.species,
+        markDescription: row.markDescription ?? undefined,
+        imageUrl: row.imageUrl,
         lastSeenAt: lastScan?.scannedAt,
       };
     }),

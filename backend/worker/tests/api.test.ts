@@ -393,6 +393,39 @@ describe('rfid device integration', () => {
     );
     expect(badDirection.status).toBe(400);
   });
+
+  it('auto-creates a reader referenced by a scan instead of failing the insert', async () => {
+    const tokens = await registerAndLogin('99245566');
+    const auth = tokens.accessToken;
+
+    const ingest = await api(
+      '/api/scans',
+      json('POST', { scans: [{ epc: 'E280-7777', readerId: 'never-registered-01' }] }, auth),
+    );
+    expect(ingest.status).toBe(200);
+    expect(ingest.body.data.accepted).toBe(1);
+
+    const recent = await api('/api/scans', authorized(auth));
+    expect(recent.body.data[0].reader).toEqual({ id: 'never-registered-01', name: 'RFID уншигч' });
+  });
+
+  it("stores the scan without a reader link when the reader belongs to another user", async () => {
+    const ownerTokens = await registerAndLogin('99256611');
+    await api(
+      '/api/devices/readers',
+      json('POST', { id: 'shared-reader-01', name: 'Original owner' }, ownerTokens.accessToken),
+    );
+
+    const otherTokens = await registerAndLogin('99267722');
+    const ingest = await api(
+      '/api/scans',
+      json('POST', { scans: [{ epc: 'E280-8888', readerId: 'shared-reader-01' }] }, otherTokens.accessToken),
+    );
+    expect(ingest.status).toBe(200);
+
+    const recent = await api('/api/scans', authorized(otherTokens.accessToken));
+    expect(recent.body.data[0].reader).toBeNull();
+  });
 });
 
 describe('push tokens', () => {

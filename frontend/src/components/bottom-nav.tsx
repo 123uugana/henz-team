@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Нүүр", icon: Home },
-  { href: "/history", label: "Тооллого", icon: ClipboardList },
+  { href: "/missing", label: "Тооллого", icon: ClipboardList },
   { href: "/animals/new", label: "Мал нэмэх", icon: Plus, accent: true },
   { href: "/animals", label: "Малууд", icon: PawPrint },
   { href: "/notifications", label: "Мэдэгдэл", icon: Bell, badge: true },
