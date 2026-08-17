@@ -1,10 +1,18 @@
 import { env } from 'cloudflare:workers';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { drizzle } from 'drizzle-orm/d1';
+import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import worker from '../src/index';
+import { users } from '../src/db/schema';
 
 type WorkerEnv = Parameters<typeof worker.fetch>[1];
 const testEnv = env as unknown as WorkerEnv;
+
+async function makeDealer(userId: string) {
+  const db = drizzle(testEnv.DB);
+  await db.update(users).set({ role: 'DEALER' }).where(eq(users.id, userId));
+}
 
 type ApiBody = {
   success: boolean;
@@ -644,5 +652,124 @@ describe('dealer registrations', () => {
       json('POST', { orgName: '', contact: '', prefixRequested: '' }, tokens.accessToken),
     );
     expect(res.status).toBe(400);
+  });
+});
+
+describe('dealer farmers', () => {
+  it('rejects non-dealer users from all farmer-management endpoints', async () => {
+    const tokens = await registerAndLogin('99312233');
+    const auth = tokens.accessToken;
+
+    const list = await api('/api/dealer/farmers', authorized(auth));
+    expect(list.status).toBe(403);
+
+    const add = await api(
+      '/api/dealer/farmers',
+      json('POST', { phoneNumber: '99000001', name: 'Бат' }, auth),
+    );
+    expect(add.status).toBe(403);
+
+    const remove = await api('/api/dealer/farmers/does-not-exist', { method: 'DELETE', headers: { Authorization: `Bearer ${auth}` } });
+    expect(remove.status).toBe(403);
+  });
+
+  it('adds a new farmer by phone number and lists it back', async () => {
+    const dealerTokens = await registerAndLogin('99323344');
+    await makeDealer(dealerTokens.user.id);
+    const auth = dealerTokens.accessToken;
+
+    const added = await api(
+      '/api/dealer/farmers',
+      json('POST', { phoneNumber: '99334455', name: 'Б.Дорж', aimag: 'Төв', sum: 'Зуунмод' }, auth),
+    );
+    expect(added.status).toBe(200);
+    expect(added.body.data).toMatchObject({
+      phoneNumber: '99334455',
+      name: 'Б.Дорж',
+      aimag: 'Төв',
+      sum: 'Зуунмод',
+      status: 'ACTIVE',
+      livestockCount: 0,
+    });
+
+    const list = await api('/api/dealer/farmers', authorized(auth));
+    expect(list.status).toBe(200);
+    expect(list.body.data.items).toHaveLength(1);
+    expect(list.body.data.items[0].phoneNumber).toBe('99334455');
+
+    const farmerLogin = await registerAndLogin('99334455');
+    expect(farmerLogin.requiresProfileSetup).toBe(false);
+    expect(farmerLogin.user.name).toBe('Б.Дорж');
+  });
+
+  it('links an already-registered farmer instead of duplicating them', async () => {
+    const dealerTokens = await registerAndLogin('99345566');
+    await makeDealer(dealerTokens.user.id);
+    const auth = dealerTokens.accessToken;
+
+    const existingFarmer = await registerAndLogin('99356677');
+
+    const added = await api(
+      '/api/dealer/farmers',
+      json('POST', { phoneNumber: '99356677', name: 'Ц.Сараа', aimag: 'Сэлэнгэ' }, auth),
+    );
+    expect(added.status).toBe(200);
+    expect(added.body.data.id).toBe(existingFarmer.user.id);
+    expect(added.body.data.aimag).toBe('Сэлэнгэ');
+  });
+
+  it('rejects linking a farmer already managed by another dealer', async () => {
+    const dealerA = await registerAndLogin('99367788');
+    await makeDealer(dealerA.user.id);
+    await api(
+      '/api/dealer/farmers',
+      json('POST', { phoneNumber: '99378899', name: 'Farmer A' }, dealerA.accessToken),
+    );
+
+    const dealerB = await registerAndLogin('99389900');
+    await makeDealer(dealerB.user.id);
+    const res = await api(
+      '/api/dealer/farmers',
+      json('POST', { phoneNumber: '99378899', name: 'Farmer A' }, dealerB.accessToken),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('FARMER_ALREADY_LINKED');
+  });
+
+  it('removes a farmer by unlinking without deleting the user', async () => {
+    const dealerTokens = await registerAndLogin('99390011');
+    await makeDealer(dealerTokens.user.id);
+    const auth = dealerTokens.accessToken;
+
+    const added = await api(
+      '/api/dealer/farmers',
+      json('POST', { phoneNumber: '99301122', name: 'Х.Мөнх' }, auth),
+    );
+    const farmerId = added.body.data.id;
+
+    const removed = await api(`/api/dealer/farmers/${farmerId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${auth}` } });
+    expect(removed.status).toBe(200);
+    expect(removed.body.data.removed).toBe(true);
+
+    const list = await api('/api/dealer/farmers', authorized(auth));
+    expect(list.body.data.items).toHaveLength(0);
+
+    const farmerLogin = await registerAndLogin('99301122');
+    expect(farmerLogin.user.name).toBe('Х.Мөнх');
+  });
+
+  it('returns 404 when removing a farmer not managed by this dealer', async () => {
+    const dealerA = await registerAndLogin('99312244');
+    await makeDealer(dealerA.user.id);
+    const added = await api(
+      '/api/dealer/farmers',
+      json('POST', { phoneNumber: '99323355', name: 'Farmer' }, dealerA.accessToken),
+    );
+    const farmerId = added.body.data.id;
+
+    const dealerB = await registerAndLogin('99334466');
+    await makeDealer(dealerB.user.id);
+    const res = await api(`/api/dealer/farmers/${farmerId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${dealerB.accessToken}` } });
+    expect(res.status).toBe(404);
   });
 });

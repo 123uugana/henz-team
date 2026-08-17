@@ -32,7 +32,7 @@ type AuthUser = {
   id: string;
   phoneNumber: string;
   name: string;
-  role: 'FARMER' | 'ADMIN';
+  role: 'FARMER' | 'ADMIN' | 'DEALER';
 };
 
 type TokenPayload = {
@@ -121,6 +121,13 @@ const dealerRegistrationInputSchema = z.object({
 
 const decideDealerRegistrationSchema = z.object({
   status: z.enum(['APPROVED', 'REJECTED']),
+});
+
+const addFarmerSchema = z.object({
+  phoneNumber: z.string().regex(/^\d{8}$/),
+  name: z.string().trim().min(2, 'Нэр хамгийн багадаа 2 тэмдэгт байна.'),
+  aimag: z.string().trim().optional(),
+  sum: z.string().trim().optional(),
 });
 
 const HISTORY_RANGES = ['7d', '1m', '3m', '6m', '1y'] as const;
@@ -757,6 +764,10 @@ async function handleVerifyOtp(request: Request, db: ReturnType<typeof drizzle>,
       phoneNumber: input.phoneNumber,
       name: '',
       role: 'FARMER' as const,
+      aimag: null,
+      sum: null,
+      dealerId: null,
+      status: 'ACTIVE' as const,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -1757,6 +1768,131 @@ async function handleDecideDealerRegistration(
   return apiResponse(dealerRegistrationResponse(updated!));
 }
 
+function farmerResponse(row: typeof users.$inferSelect, livestockCount: number) {
+  return {
+    id: row.id,
+    phoneNumber: row.phoneNumber,
+    name: row.name,
+    aimag: row.aimag ?? undefined,
+    sum: row.sum ?? undefined,
+    status: row.status,
+    livestockCount,
+    createdAt: row.createdAt,
+  };
+}
+
+async function handleListFarmers(request: Request, db: ReturnType<typeof drizzle>, dealerId: string) {
+  const url = new URL(request.url);
+  const search = url.searchParams.get('search')?.trim();
+  const aimag = url.searchParams.get('aimag')?.trim();
+  const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
+  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 20));
+
+  const filters = [eq(users.dealerId, dealerId)];
+  if (search) {
+    filters.push(or(like(users.name, `%${search}%`), like(users.phoneNumber, `%${search}%`))!);
+  }
+  if (aimag) {
+    filters.push(eq(users.aimag, aimag));
+  }
+  const conditions = and(...filters);
+
+  const totalRow = await db.select({ value: count() }).from(users).where(conditions).get();
+  const rows = await db
+    .select()
+    .from(users)
+    .where(conditions)
+    .orderBy(users.name)
+    .limit(limit)
+    .offset((page - 1) * limit)
+    .all();
+
+  const counts = await Promise.all(
+    rows.map((row) =>
+      db.select({ value: count() }).from(livestock).where(eq(livestock.userId, row.id)).get(),
+    ),
+  );
+
+  return apiResponse({
+    items: rows.map((row, i) => farmerResponse(row, counts[i]?.value ?? 0)),
+    total: totalRow?.value ?? 0,
+    page,
+    limit,
+    totalPages: Math.max(1, Math.ceil((totalRow?.value ?? 0) / limit)),
+  });
+}
+
+async function handleAddFarmer(request: Request, db: ReturnType<typeof drizzle>, dealerId: string) {
+  const input = await parseJson(request, addFarmerSchema);
+  const existing = await db
+    .select()
+    .from(users)
+    .where(eq(users.phoneNumber, input.phoneNumber))
+    .get();
+
+  if (existing) {
+    if (existing.role !== 'FARMER') {
+      throw new ApiFailure(409, 'Энэ дугаар малчин бус хэрэглэгчид бүртгэгдсэн байна.', 'NOT_A_FARMER');
+    }
+    if (existing.dealerId && existing.dealerId !== dealerId) {
+      throw new ApiFailure(409, 'Энэ дугаар өөр гэрээтэд бүртгэгдсэн байна.', 'FARMER_ALREADY_LINKED');
+    }
+
+    await db
+      .update(users)
+      .set({
+        name: input.name.trim(),
+        aimag: input.aimag ? input.aimag.trim() : existing.aimag,
+        sum: input.sum ? input.sum.trim() : existing.sum,
+        dealerId,
+        status: 'ACTIVE',
+        updatedAt: now(),
+      })
+      .where(eq(users.id, existing.id));
+
+    const updated = await db.select().from(users).where(eq(users.id, existing.id)).get();
+    const livestockCount = await db
+      .select({ value: count() })
+      .from(livestock)
+      .where(eq(livestock.userId, existing.id))
+      .get();
+    return apiResponse(farmerResponse(updated!, livestockCount?.value ?? 0));
+  }
+
+  const timestamp = now();
+  const id = createId('user');
+  await db.insert(users).values({
+    id,
+    phoneNumber: input.phoneNumber,
+    name: input.name.trim(),
+    role: 'FARMER',
+    aimag: input.aimag?.trim() ?? null,
+    sum: input.sum?.trim() ?? null,
+    dealerId,
+    status: 'ACTIVE',
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+
+  const created = await db.select().from(users).where(eq(users.id, id)).get();
+  return apiResponse(farmerResponse(created!, 0));
+}
+
+async function handleRemoveFarmer(db: ReturnType<typeof drizzle>, dealerId: string, farmerId: string) {
+  const existing = await db
+    .select()
+    .from(users)
+    .where(and(eq(users.id, farmerId), eq(users.dealerId, dealerId)))
+    .get();
+
+  if (!existing) {
+    throw new ApiFailure(404, 'Малчин олдсонгүй.', 'NOT_FOUND');
+  }
+
+  await db.update(users).set({ dealerId: null, updatedAt: now() }).where(eq(users.id, farmerId));
+  return apiResponse({ id: farmerId, removed: true });
+}
+
 async function handleUpload(request: Request) {
   const formData = await request.formData();
   const file = formData.get('file');
@@ -1858,6 +1994,22 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
     return handleCreateDealerRegistration(request, db, user.id);
   }
 
+  if (request.method === 'GET' && path === '/api/dealer/farmers') {
+    if (user.role !== 'DEALER') {
+      throw new ApiFailure(403, 'Гэрээт эрх шаардлагатай.', 'FORBIDDEN');
+    }
+
+    return handleListFarmers(request, db, user.id);
+  }
+
+  if (request.method === 'POST' && path === '/api/dealer/farmers') {
+    if (user.role !== 'DEALER') {
+      throw new ApiFailure(403, 'Гэрээт эрх шаардлагатай.', 'FORBIDDEN');
+    }
+
+    return handleAddFarmer(request, db, user.id);
+  }
+
   if (request.method === 'GET' && path === '/api/alerts') {
     return handleListAlerts(db, user.id);
   }
@@ -1951,6 +2103,16 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
     }
 
     return handleDecideDealerRegistration(request, db, dealerRegistrationDecisionMatch[1]);
+  }
+
+  const dealerFarmerMatch = path.match(/^\/api\/dealer\/farmers\/([^/]+)$/);
+
+  if (dealerFarmerMatch && request.method === 'DELETE') {
+    if (user.role !== 'DEALER') {
+      throw new ApiFailure(403, 'Гэрээт эрх шаардлагатай.', 'FORBIDDEN');
+    }
+
+    return handleRemoveFarmer(db, user.id, dealerFarmerMatch[1]);
   }
 
   const livestockMatch = path.match(/^\/api\/livestock\/([^/]+)$/);

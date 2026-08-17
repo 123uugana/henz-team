@@ -54,7 +54,14 @@ function OtpVerificationForm() {
     try {
       const result = await verifyOtp(phone, value);
       saveSession(result);
-      router.push(result.requiresProfileSetup ? "/herd-setup" : "/dashboard");
+
+      if (result.requiresProfileSetup) {
+        router.push("/herd-setup");
+      } else if (result.user.role === "DEALER") {
+        router.push("/dealer/farmers");
+      } else {
+        router.push("/dashboard");
+      }
     } catch (err) {
       setCode("");
       setError(

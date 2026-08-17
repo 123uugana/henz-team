@@ -96,6 +96,10 @@ POST  /api/dealer-registrations           request a prefix for an outside org
 GET   /api/admin/dealer-registrations     list requests (ADMIN only)
 PATCH /api/admin/dealer-registrations/:id approve/reject (ADMIN only)
 
+GET   /api/dealer/farmers           list my managed farmers (DEALER only; ?search=, ?aimag=, ?page=, ?limit=)
+POST  /api/dealer/farmers           add a farmer by phone (links existing user or creates one) (DEALER only)
+DELETE /api/dealer/farmers/:id      unlink a farmer from me, does not delete the user (DEALER only)
+
 GET   /api/admin/statistics         system-wide stats (ADMIN only)
 GET   /api/admin/tags               all tags in the registry (ADMIN only)
 PATCH /api/admin/tags/:epc/unlock   reset a tag back to AVAILABLE (ADMIN only)

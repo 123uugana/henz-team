@@ -14,3 +14,17 @@ export function useAuthGuard() {
     }
   }, [router]);
 }
+
+/** Redirects to /phone if signed out, or /dashboard if signed in without the DEALER role. */
+export function useDealerGuard() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const session = getSession();
+    if (!session) {
+      router.replace("/phone");
+    } else if (session.user.role !== "DEALER") {
+      router.replace("/dashboard");
+    }
+  }, [router]);
+}

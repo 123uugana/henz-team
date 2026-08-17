@@ -91,7 +91,7 @@ export interface AuthUser {
   id: string;
   phoneNumber: string;
   name: string;
-  role: "FARMER" | "ADMIN";
+  role: "FARMER" | "ADMIN" | "DEALER";
 }
 
 export interface VerifyOtpResult {
@@ -415,6 +415,51 @@ export function decideDealerRegistration(id: string, status: "APPROVED" | "REJEC
   return authorizedFetch<DealerRegistration>(`/api/admin/dealer-registrations/${id}`, {
     method: "PATCH",
     body: JSON.stringify({ status }),
+  });
+}
+
+// --- Dealer farmers ----------------------------------------------------------------
+
+export interface Farmer {
+  id: string;
+  phoneNumber: string;
+  name: string;
+  aimag?: string;
+  sum?: string;
+  status: "ACTIVE" | "SUSPENDED";
+  livestockCount: number;
+  createdAt: string;
+}
+
+export interface FarmerListResult {
+  items: Farmer[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export function listFarmers(params: { search?: string; aimag?: string; page?: number; limit?: number } = {}) {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    limit: String(params.limit ?? 50),
+  });
+  if (params.search) query.set("search", params.search);
+  if (params.aimag) query.set("aimag", params.aimag);
+
+  return authorizedFetch<FarmerListResult>(`/api/dealer/farmers?${query.toString()}`);
+}
+
+export function addFarmer(input: { phoneNumber: string; name: string; aimag?: string; sum?: string }) {
+  return authorizedFetch<Farmer>("/api/dealer/farmers", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function removeFarmer(id: string) {
+  return authorizedFetch<{ id: string; removed: boolean }>(`/api/dealer/farmers/${id}`, {
+    method: "DELETE",
   });
 }
 

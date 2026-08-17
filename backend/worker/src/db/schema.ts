@@ -6,12 +6,17 @@ export const users = sqliteTable(
     id: text('id').primaryKey(),
     phoneNumber: text('phone_number').notNull(),
     name: text('name').notNull().default(''),
-    role: text('role', { enum: ['FARMER', 'ADMIN'] }).notNull().default('FARMER'),
+    role: text('role', { enum: ['FARMER', 'ADMIN', 'DEALER'] }).notNull().default('FARMER'),
+    aimag: text('aimag'),
+    sum: text('sum'),
+    dealerId: text('dealer_id'),
+    status: text('status', { enum: ['ACTIVE', 'SUSPENDED'] }).notNull().default('ACTIVE'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
   },
   (table) => [
     uniqueIndex('users_phone_number_idx').on(table.phoneNumber),
+    index('users_dealer_id_idx').on(table.dealerId),
   ],
 );
 
