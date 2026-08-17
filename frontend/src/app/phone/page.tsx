@@ -11,10 +11,11 @@ import { Label } from "@/components/ui/label";
 import { ApiError, sendOtp } from "@/lib/api";
 
 const PHONE_LENGTH = 8;
+const VERIFIED_PHONE = "80163296";
 
 export default function PhoneEntryPage() {
   const router = useRouter();
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState(VERIFIED_PHONE);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,7 +46,7 @@ export default function PhoneEntryPage() {
           Утасны дугаараа оруулна уу
         </h1>
         <p className="text-sm text-gray-400">
-          Таны бүртгэлтэй дугаар руу баталгаажуулах код илгээх болно.
+          Баталгаажсан дугаар руу баталгаажуулах код илгээх болно.
         </p>
       </div>
 
@@ -64,7 +65,7 @@ export default function PhoneEntryPage() {
             onChange={(e) =>
               setPhone(e.target.value.replace(/\D/g, "").slice(0, PHONE_LENGTH))
             }
-            placeholder="99123456"
+            placeholder={VERIFIED_PHONE}
             className="h-full flex-1 border-none bg-transparent px-0 pr-4 py-0 text-base text-white placeholder:text-gray-500 focus-visible:ring-0"
           />
         </div>
