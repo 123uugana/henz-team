@@ -13,5 +13,5 @@
   "typescript.tsserver.exclude": [
     "**/.wrangler/**"
   ],
-  "typescript.tsserver.experimental.enableProjectDiagnostics": false
+  "js/ts.tsserver.experimental.enableProjectDiagnostics": false
 }

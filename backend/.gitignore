@@ -2,6 +2,7 @@
 node_modules/
 
 # debug
+*.log
 npm-debug.*
 yarn-debug.*
 yarn-error.*
@@ -16,6 +17,7 @@ yarn-error.*
 .dev.vars.*
 !.dev.vars.example
 .wrangler/
+.wrangler-config/
 
 # typescript
 *.tsbuildinfo
