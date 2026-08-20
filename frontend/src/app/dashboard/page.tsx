@@ -35,15 +35,14 @@ export default function DashboardPage() {
           <Link
             href="/devices"
             className="inline-flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-300"
-          >
-            <span className="size-1.5 rounded-full bg-emerald-400" />
-            Идэвхтэй холбогдсон
-          </Link>
+          ></Link>
         }
       />
 
       {loading ? (
-        <p className="mt-10 text-center text-sm text-gray-500">Ачаалж байна...</p>
+        <p className="mt-10 text-center text-sm text-gray-500">
+          Ачаалж байна...
+        </p>
       ) : error ? (
         <p className="mt-10 text-center text-sm text-red-400">{error}</p>
       ) : (
@@ -56,9 +55,6 @@ export default function DashboardPage() {
             <div className="flex items-end justify-between">
               <div>
                 <p className="text-3xl font-bold">{missingCount}</p>
-                <p className="text-xs text-gray-400">
-                  {total}-аас {returned} мал буцаж орсон
-                </p>
               </div>
               <div className="flex gap-4 text-right">
                 <div>
@@ -66,7 +62,9 @@ export default function DashboardPage() {
                   <p className="text-[11px] text-gray-400">Нийт</p>
                 </div>
                 <div>
-                  <p className="text-lg font-bold text-emerald-400">{returned}</p>
+                  <p className="text-lg font-bold text-emerald-400">
+                    {returned}
+                  </p>
                   <p className="text-[11px] text-gray-400">Орсон</p>
                 </div>
               </div>
@@ -82,17 +80,19 @@ export default function DashboardPage() {
           </Card>
 
           <div className="flex flex-col gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">Сүргийн байдал</h2>
+            <h2 className="text-sm font-semibold text-gray-200">
+              Сүргийн байдал
+            </h2>
 
             <div className="grid grid-cols-2 gap-3">
               <Card className="gap-1 bg-[#141a2c] p-4 ring-1 ring-white/5">
-                <PawPrint className="size-5 text-[#f2a93c]" strokeWidth={1.75} />
                 <p className="text-xl font-bold">{total}</p>
                 <p className="text-xs text-gray-400">Нийт бүртгэлтэй</p>
               </Card>
               <Card className="gap-1 bg-[#141a2c] p-4 ring-1 ring-white/5">
-                <ScanLine className="size-5 text-[#f2a93c]" strokeWidth={1.75} />
-                <p className="text-xl font-bold">{dashboard?.scannedToday ?? 0}</p>
+                <p className="text-xl font-bold">
+                  {dashboard?.scannedToday ?? 0}
+                </p>
                 <p className="text-xs text-gray-400">Өнөөдөр уншигдсан</p>
               </Card>
             </div>
@@ -111,12 +111,11 @@ export default function DashboardPage() {
                     className="flex-row items-center justify-between gap-3 bg-[#141a2c] p-3 ring-1 ring-white/5"
                   >
                     <div className="flex min-w-0 items-center gap-3">
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/5">
-                        <PawPrint className="size-4 text-[#f2a93c]" strokeWidth={1.75} />
-                      </span>
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/5"></span>
                       <div className="flex min-w-0 flex-col">
                         <p className="truncate text-sm font-medium">
-                          {scan.epc} · {scan.livestock.name || scan.livestock.earNumber}
+                          {scan.epc} ·{" "}
+                          {scan.livestock.name || scan.livestock.earNumber}
                         </p>
                         <p className="text-xs text-gray-400">
                           {scan.direction === "ENTER" ? "Орсон" : "Гарсан"} ·{" "}
@@ -139,8 +138,14 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <Sheet open={activeScan !== null} onOpenChange={(open) => !open && setActiveScan(null)}>
-        <SheetContent side="bottom" className="rounded-t-3xl border-white/10 bg-[#141a2c] px-6 pb-8 pt-2 text-white">
+      <Sheet
+        open={activeScan !== null}
+        onOpenChange={(open) => !open && setActiveScan(null)}
+      >
+        <SheetContent
+          side="bottom"
+          className="rounded-t-3xl border-white/10 bg-[#141a2c] px-6 pb-8 pt-2 text-white"
+        >
           <SheetHeader className="items-center px-0 pb-2 pt-4">
             <div className="mb-1 h-1 w-10 rounded-full bg-white/15" />
             <SheetTitle className="text-white">Сканы дэлгэрэнгүй</SheetTitle>
@@ -150,13 +155,19 @@ export default function DashboardPage() {
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-3">
                 <span className="flex size-14 items-center justify-center rounded-2xl bg-white/5">
-                  <PawPrint className="size-6 text-[#f2a93c]" strokeWidth={1.5} />
+                  <PawPrint
+                    className="size-6 text-[#f2a93c]"
+                    strokeWidth={1.5}
+                  />
                 </span>
                 <div className="flex flex-col">
                   <p className="text-base font-semibold">
-                    {activeScan.livestock.name || activeScan.livestock.earNumber}
+                    {activeScan.livestock.name ||
+                      activeScan.livestock.earNumber}
                   </p>
-                  <p className="text-xs text-gray-400">Tag EPC: {activeScan.epc}</p>
+                  <p className="text-xs text-gray-400">
+                    Tag EPC: {activeScan.epc}
+                  </p>
                 </div>
               </div>
 
