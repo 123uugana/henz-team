@@ -22,8 +22,8 @@ function getApiBaseUrl() {
   if (explicit) return explicit;
 
   const host = getDebuggerHost()?.split(":")[0];
-  if (Platform.OS === "android") return "http://10.0.2.2:8787";
   if (host) return `http://${host}:8787`;
+  if (Platform.OS === "android") return "http://10.0.2.2:8787";
 
   return "http://localhost:8787";
 }
