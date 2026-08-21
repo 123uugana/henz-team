@@ -16,6 +16,7 @@
 # next.js
 /.next/
 /src/.next/
+/src/next-app/.next/
 /out/
 
 # expo

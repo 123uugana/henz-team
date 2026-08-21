@@ -9,10 +9,10 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "build": "next build src",
-    "next:dev": "next dev src",
-    "next:build": "next build src",
-    "next:start": "next start src",
+    "build": "next build src/next-app",
+    "next:dev": "next dev src/next-app",
+    "next:build": "next build src/next-app",
+    "next:start": "next start src/next-app",
     "lint": "eslint"
   },
   "dependencies": {
