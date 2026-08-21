@@ -8,6 +8,7 @@ build/
 dist/
 
 # local tooling
+.idea/
 .claude/
 .wrangler/
 .wrangler-config/
@@ -25,6 +26,11 @@ yarn-error.log*
 .env.*
 .dev.vars
 .dev.vars.*
+
+# generated mobile build output
+frontend/android/.gradle/
+frontend/android/**/build/
+frontend/android/**/.cxx/
 
 # OS/editor
 .DS_Store

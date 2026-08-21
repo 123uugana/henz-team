@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Хэнц Хурга",
+    "slug": "henz-hurag",
+    "scheme": "henzhurag",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "plugins": ["expo-router"],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "mn.henzhurag.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#070a12"
+      }
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      }
+    }
+  }
+}
