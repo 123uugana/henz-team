@@ -13,7 +13,8 @@
     "db:seed:local": "wrangler d1 execute hents-hurag --local --file=seed/demo.sql --config wrangler.toml",
     "db:seed:remote": "wrangler d1 execute hents-hurag --remote --file=seed/demo.sql --config wrangler.toml",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build": "tsc --noEmit"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
