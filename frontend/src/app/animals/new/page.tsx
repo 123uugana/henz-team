@@ -29,10 +29,11 @@ import {
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
-const SPECIES_INFO: Record<Species, { label: string; icon: typeof PawPrint }> = {
-  SHEEP: { label: "Хонь", icon: PawPrint },
-  GOAT: { label: "Ямаа", icon: Rabbit },
-};
+const SPECIES_INFO: Record<Species, { label: string; icon: typeof PawPrint }> =
+  {
+    SHEEP: { label: "Хонь", icon: PawPrint },
+    GOAT: { label: "Ямаа", icon: Rabbit },
+  };
 
 const GENDERS = [
   { value: "MALE", label: "Эр", icon: Mars },
@@ -58,9 +59,9 @@ export default function RegisterAnimalPage() {
   const [nickname, setNickname] = useState("");
   const [age, setAge] = useState("");
   const [features, setFeatures] = useState("");
-  const [gender, setGender] = useState<(typeof GENDERS)[number]["value"] | null>(
-    null
-  );
+  const [gender, setGender] = useState<
+    (typeof GENDERS)[number]["value"] | null
+  >(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -77,7 +78,12 @@ export default function RegisterAnimalPage() {
     let cancelled = false;
     getTag(epc)
       .then((tag) => {
-        if (!cancelled) setTagBlocked(tag.status === "CLAIMED" || tag.status === "LOCKED" || tag.status === "DAMAGED");
+        if (!cancelled)
+          setTagBlocked(
+            tag.status === "CLAIMED" ||
+              tag.status === "LOCKED" ||
+              tag.status === "DAMAGED",
+          );
       })
       .catch(() => {
         if (!cancelled) setTagBlocked(false);
@@ -87,11 +93,12 @@ export default function RegisterAnimalPage() {
     };
   }, [epc]);
 
-  const canSubmit = tagCode.trim().length > 0 && species !== null && !tagBlocked && !submitting;
+  const canSubmit =
+    tagCode.trim().length > 0 && species !== null && !tagBlocked && !submitting;
 
   const photoPreview = useMemo(
     () => (photoFile ? URL.createObjectURL(photoFile) : null),
-    [photoFile]
+    [photoFile],
   );
 
   useEffect(() => {
@@ -127,7 +134,9 @@ export default function RegisterAnimalPage() {
 
       router.push(`/animals/${animal.id}`);
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : "Бүртгэж чадсангүй.");
+      setSubmitError(
+        err instanceof ApiError ? err.message : "Бүртгэж чадсангүй.",
+      );
       setSubmitting(false);
     }
   };
@@ -179,7 +188,9 @@ export default function RegisterAnimalPage() {
           <div className="flex items-center gap-2 rounded-2xl bg-emerald-400/10 px-4 py-3">
             {(() => {
               const Icon = SPECIES_INFO[species].icon;
-              return <Icon className="size-4 text-emerald-400" strokeWidth={1.75} />;
+              return (
+                <Icon className="size-4 text-emerald-400" strokeWidth={1.75} />
+              );
             })()}
             <span className="text-sm font-medium text-emerald-400">
               {SPECIES_INFO[species].label} — автоматаар танигдлаа ({epc})
@@ -209,20 +220,6 @@ export default function RegisterAnimalPage() {
 
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="age" className="text-gray-300">
-              Нас
-            </Label>
-            <Input
-              id="age"
-              type="number"
-              value={age}
-              onChange={(e) => setAge(e.target.value)}
-              placeholder="0"
-              className="h-14 border-white/10 bg-[#161c2c] px-4 py-0 text-base text-white placeholder:text-gray-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
-            />
-          </div>
-
-          <div className="flex flex-col gap-2">
             <Label className="text-gray-300">Хүйс</Label>
             <div className="grid h-14 grid-cols-2 gap-2">
               {GENDERS.map(({ value, label, icon: Icon }) => (
@@ -234,7 +231,7 @@ export default function RegisterAnimalPage() {
                     "flex items-center justify-center gap-1.5 rounded-2xl border text-sm font-medium transition-colors",
                     gender === value
                       ? "border-[#f2a93c] bg-[#1c1408] text-[#f2a93c]"
-                      : "border-white/10 bg-[#161c2c] text-gray-400 hover:border-white/20"
+                      : "border-white/10 bg-[#161c2c] text-gray-400 hover:border-white/20",
                   )}
                 >
                   <Icon className="size-4" strokeWidth={1.75} />

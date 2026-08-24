@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, ClipboardList, Home, PawPrint, Plus } from "lucide-react";
+import { CloudSun, ClipboardList, Home, PawPrint, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
@@ -10,7 +10,7 @@ const NAV_ITEMS = [
   { href: "/missing", label: "Тооллого", icon: ClipboardList },
   { href: "/animals/new", label: "Мал нэмэх", icon: Plus, accent: true },
   { href: "/animals", label: "Малууд", icon: PawPrint },
-  { href: "/notifications", label: "Мэдэгдэл", icon: Bell, badge: true },
+  { href: "/weather", label: "Цаг агаар", icon: CloudSun },
 ] as const;
 
 export function BottomNav() {
@@ -44,9 +44,6 @@ export function BottomNav() {
                 )}
               >
                 <Icon className="size-5" strokeWidth={active ? 2.25 : 1.75} />
-                {"badge" in item && item.badge ? (
-                  <span className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-red-400" />
-                ) : null}
               </span>
               <span
                 className={cn(

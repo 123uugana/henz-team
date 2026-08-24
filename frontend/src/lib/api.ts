@@ -6,7 +6,7 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
-    public code?: string
+    public code?: string,
   ) {
     super(message);
   }
@@ -28,13 +28,15 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(0, "Сервертэй холбогдож чадсангүй.", "NETWORK_ERROR");
   }
 
-  const json = (await response.json().catch(() => null)) as ApiEnvelope<T> | null;
+  const json = (await response
+    .json()
+    .catch(() => null)) as ApiEnvelope<T> | null;
 
   if (!json || !json.success) {
     throw new ApiError(
       response.status,
       json?.success === false ? json.message : "Сервертэй холбогдож чадсангүй.",
-      json?.success === false ? json.code : undefined
+      json?.success === false ? json.code : undefined,
     );
   }
 
@@ -46,18 +48,28 @@ async function tryRefresh(): Promise<string | null> {
   if (!session) return null;
 
   try {
-    const result = await apiFetch<{ accessToken: string; refreshToken: string }>(
-      "/api/auth/refresh",
-      { method: "POST", body: JSON.stringify({ refreshToken: session.refreshToken }) }
-    );
-    saveSession({ ...session, accessToken: result.accessToken, refreshToken: result.refreshToken });
+    const result = await apiFetch<{
+      accessToken: string;
+      refreshToken: string;
+    }>("/api/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ refreshToken: session.refreshToken }),
+    });
+    saveSession({
+      ...session,
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+    });
     return result.accessToken;
   } catch {
     return null;
   }
 }
 
-async function authorizedFetch<T>(path: string, init?: RequestInit): Promise<T> {
+async function authorizedFetch<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
   const session = getSession();
 
   if (!session) {
@@ -67,7 +79,10 @@ async function authorizedFetch<T>(path: string, init?: RequestInit): Promise<T> 
   try {
     return await apiFetch<T>(path, {
       ...init,
-      headers: { Authorization: `Bearer ${session.accessToken}`, ...init?.headers },
+      headers: {
+        Authorization: `Bearer ${session.accessToken}`,
+        ...init?.headers,
+      },
     });
   } catch (err) {
     if (!(err instanceof ApiError) || err.status !== 401) throw err;
@@ -104,7 +119,7 @@ export interface VerifyOtpResult {
 export async function sendOtp(phoneNumber: string) {
   const result = await apiFetch<{ phoneNumber: string; code?: string }>(
     "/api/auth/send-otp",
-    { method: "POST", body: JSON.stringify({ phoneNumber }) }
+    { method: "POST", body: JSON.stringify({ phoneNumber }) },
   );
 
   if (result.code) {
@@ -206,7 +221,9 @@ export function listLivestock(params: {
   if (params.species) query.set("species", params.species);
   if (params.gender) query.set("gender", params.gender);
 
-  return authorizedFetch<LivestockListResult>(`/api/livestock?${query.toString()}`);
+  return authorizedFetch<LivestockListResult>(
+    `/api/livestock?${query.toString()}`,
+  );
 }
 
 export function getLivestock(id: string) {
@@ -228,9 +245,12 @@ export function updateLivestock(id: string, input: LivestockInput) {
 }
 
 export function deleteLivestock(id: string) {
-  return authorizedFetch<{ id: string; deleted: boolean }>(`/api/livestock/${id}`, {
-    method: "DELETE",
-  });
+  return authorizedFetch<{ id: string; deleted: boolean }>(
+    `/api/livestock/${id}`,
+    {
+      method: "DELETE",
+    },
+  );
 }
 
 export function updateLivestockStatus(id: string, status: LivestockStatus) {
@@ -240,7 +260,11 @@ export function updateLivestockStatus(id: string, status: LivestockStatus) {
   });
 }
 
-export function updateLivestockLocation(id: string, latitude: number, longitude: number) {
+export function updateLivestockLocation(
+  id: string,
+  latitude: number,
+  longitude: number,
+) {
   return authorizedFetch<Livestock>(`/api/livestock/${id}/location`, {
     method: "PATCH",
     body: JSON.stringify({ latitude, longitude }),
@@ -338,9 +362,12 @@ export function listAlerts() {
 }
 
 export function readAlert(id: string) {
-  return authorizedFetch<{ id: string; isRead: boolean }>(`/api/alerts/${id}/read`, {
-    method: "PATCH",
-  });
+  return authorizedFetch<{ id: string; isRead: boolean }>(
+    `/api/alerts/${id}/read`,
+    {
+      method: "PATCH",
+    },
+  );
 }
 
 export function readAllAlerts() {
@@ -361,7 +388,9 @@ export interface TagRegistryEntry {
 }
 
 export function getTag(epc: string) {
-  return authorizedFetch<TagRegistryEntry>(`/api/rfid/tags/${encodeURIComponent(epc)}`);
+  return authorizedFetch<TagRegistryEntry>(
+    `/api/rfid/tags/${encodeURIComponent(epc)}`,
+  );
 }
 
 export function claimTag(epc: string) {
@@ -378,7 +407,7 @@ export function listAdminTags() {
 export function unlockTag(epc: string) {
   return authorizedFetch<TagRegistryEntry>(
     `/api/admin/tags/${encodeURIComponent(epc)}/unlock`,
-    { method: "PATCH" }
+    { method: "PATCH" },
   );
 }
 
@@ -408,14 +437,22 @@ export function createDealerRegistration(input: {
 }
 
 export function listDealerRegistrations() {
-  return authorizedFetch<DealerRegistration[]>("/api/admin/dealer-registrations");
+  return authorizedFetch<DealerRegistration[]>(
+    "/api/admin/dealer-registrations",
+  );
 }
 
-export function decideDealerRegistration(id: string, status: "APPROVED" | "REJECTED") {
-  return authorizedFetch<DealerRegistration>(`/api/admin/dealer-registrations/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify({ status }),
-  });
+export function decideDealerRegistration(
+  id: string,
+  status: "APPROVED" | "REJECTED",
+) {
+  return authorizedFetch<DealerRegistration>(
+    `/api/admin/dealer-registrations/${id}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    },
+  );
 }
 
 // --- Dealer farmers ----------------------------------------------------------------
@@ -439,7 +476,14 @@ export interface FarmerListResult {
   totalPages: number;
 }
 
-export function listFarmers(params: { search?: string; aimag?: string; page?: number; limit?: number } = {}) {
+export function listFarmers(
+  params: {
+    search?: string;
+    aimag?: string;
+    page?: number;
+    limit?: number;
+  } = {},
+) {
   const query = new URLSearchParams({
     page: String(params.page ?? 1),
     limit: String(params.limit ?? 50),
@@ -447,10 +491,17 @@ export function listFarmers(params: { search?: string; aimag?: string; page?: nu
   if (params.search) query.set("search", params.search);
   if (params.aimag) query.set("aimag", params.aimag);
 
-  return authorizedFetch<FarmerListResult>(`/api/dealer/farmers?${query.toString()}`);
+  return authorizedFetch<FarmerListResult>(
+    `/api/dealer/farmers?${query.toString()}`,
+  );
 }
 
-export function addFarmer(input: { phoneNumber: string; name: string; aimag?: string; sum?: string }) {
+export function addFarmer(input: {
+  phoneNumber: string;
+  name: string;
+  aimag?: string;
+  sum?: string;
+}) {
   return authorizedFetch<Farmer>("/api/dealer/farmers", {
     method: "POST",
     body: JSON.stringify(input),
@@ -458,9 +509,12 @@ export function addFarmer(input: { phoneNumber: string; name: string; aimag?: st
 }
 
 export function removeFarmer(id: string) {
-  return authorizedFetch<{ id: string; removed: boolean }>(`/api/dealer/farmers/${id}`, {
-    method: "DELETE",
-  });
+  return authorizedFetch<{ id: string; removed: boolean }>(
+    `/api/dealer/farmers/${id}`,
+    {
+      method: "DELETE",
+    },
+  );
 }
 
 // --- Uploads -----------------------------------------------------------------------
@@ -485,13 +539,15 @@ export async function uploadImage(file: File) {
     throw new ApiError(0, "Сервертэй холбогдож чадсангүй.", "NETWORK_ERROR");
   }
 
-  const json = (await response.json().catch(() => null)) as ApiEnvelope<{ url: string }> | null;
+  const json = (await response.json().catch(() => null)) as ApiEnvelope<{
+    url: string;
+  }> | null;
 
   if (!json || !json.success) {
     throw new ApiError(
       response.status,
       json?.success === false ? json.message : "Зураг илгээж чадсангүй.",
-      json?.success === false ? json.code : undefined
+      json?.success === false ? json.code : undefined,
     );
   }
 

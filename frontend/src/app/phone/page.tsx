@@ -9,29 +9,32 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError, sendOtp } from "@/lib/api";
-
 const PHONE_LENGTH = 8;
-const VERIFIED_PHONE = "80163296";
-
 export default function PhoneEntryPage() {
   const router = useRouter();
-  const [phone, setPhone] = useState(VERIFIED_PHONE);
+  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isValid = phone.length === PHONE_LENGTH;
-
+  const handleNumberInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.target.value.replace(/\D/g, "").slice(0, PHONE_LENGTH);
+    setPhone(input);
+  };
   const handleSubmit = async () => {
     if (!isValid || loading) return;
     setLoading(true);
     setError(null);
-
+    console.log("OTP ");
     try {
       await sendOtp(phone);
+      console.log("OTP sent successfully" + phone);
       router.push(`/otp?phone=${phone}`);
     } catch (err) {
       setError(
-        err instanceof ApiError ? err.message : "Сервертэй холбогдож чадсангүй."
+        err instanceof ApiError
+          ? err.message
+          : "Сервертэй холбогдож чадсангүй.",
       );
       setLoading(false);
     }
@@ -62,10 +65,8 @@ export default function PhoneEntryPage() {
             inputMode="numeric"
             autoFocus
             value={phone}
-            onChange={(e) =>
-              setPhone(e.target.value.replace(/\D/g, "").slice(0, PHONE_LENGTH))
-            }
-            placeholder={VERIFIED_PHONE}
+            onChange={handleNumberInput}
+            placeholder=""
             className="h-full flex-1 border-none bg-transparent px-0 pr-4 py-0 text-base text-white placeholder:text-gray-500 focus-visible:ring-0"
           />
         </div>

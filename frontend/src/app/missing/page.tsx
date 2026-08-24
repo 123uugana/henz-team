@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { useMemo } from "react";
-import { Clock, Megaphone, PawPrint, Rabbit, ShieldAlert, TriangleAlert } from "lucide-react";
+import {
+  Clock,
+  Megaphone,
+  PawPrint,
+  Rabbit,
+  ShieldAlert,
+  TriangleAlert,
+} from "lucide-react";
 import { PhoneFrame } from "@/components/phone-frame";
 import { AppHeader } from "@/components/app-header";
 import { BottomNav } from "@/components/bottom-nav";
@@ -30,12 +37,19 @@ function relativeTime(iso?: string) {
   const diffMs = Date.now() - new Date(iso).getTime();
   const hours = Math.floor(diffMs / (60 * 60_000));
 
-  if (hours < 1) return `${Math.max(1, Math.floor(diffMs / 60_000))} минутын өмнө`;
+  if (hours < 1)
+    return `${Math.max(1, Math.floor(diffMs / 60_000))} минутын өмнө`;
   if (hours < 24) return `${hours} цагийн өмнө`;
   return `${Math.floor(hours / 24)} өдрийн өмнө`;
 }
 
-function SpeciesIcon({ species, className }: { species: Species; className?: string }) {
+function SpeciesIcon({
+  species,
+  className,
+}: {
+  species: Species;
+  className?: string;
+}) {
   return species === "SHEEP" ? (
     <PawPrint className={className} strokeWidth={1.5} />
   ) : (
@@ -45,10 +59,11 @@ function SpeciesIcon({ species, className }: { species: Species; className?: str
 
 export default function MissingAnimalsPage() {
   useAuthGuard();
-  const { data: missing, loading: loadingMissing, error: missingError } = useApi(
-    getMissingLivestock,
-    ""
-  );
+  const {
+    data: missing,
+    loading: loadingMissing,
+    error: missingError,
+  } = useApi(getMissingLivestock, "");
   const { data: scans, loading: loadingScans } = useApi(listScans, "");
 
   const foreignCount = useMemo(() => {
@@ -80,7 +95,10 @@ export default function MissingAnimalsPage() {
       <AppHeader backHref="/dashboard" />
 
       <Tabs defaultValue="missing" className="mt-6">
-        <TabsList variant="line" className="w-full justify-start border-b border-white/5 pb-0">
+        <TabsList
+          variant="line"
+          className="w-full justify-start border-b border-white/5 pb-0"
+        >
           <TabsTrigger
             value="missing"
             className="text-gray-400 data-active:text-[#f2a93c] data-active:after:bg-[#f2a93c]"
@@ -125,17 +143,30 @@ export default function MissingAnimalsPage() {
                   {(Object.keys(speciesBreakdown) as Species[])
                     .filter((s) => speciesBreakdown[s] > 0)
                     .map((s) => (
-                      <Card key={s} className="items-center gap-1 bg-[#141a2c] p-4 text-center ring-1 ring-white/5">
-                        <SpeciesIcon species={s} className="size-5 text-[#f2a93c]" />
-                        <p className="text-2xl font-bold">{speciesBreakdown[s]}</p>
-                        <p className="text-xs text-gray-400">{SPECIES_LABEL[s]} дутсан</p>
+                      <Card
+                        key={s}
+                        className="items-center gap-1 bg-[#141a2c] p-4 text-center ring-1 ring-white/5"
+                      >
+                        <SpeciesIcon
+                          species={s}
+                          className="size-5 text-[#f2a93c]"
+                        />
+                        <p className="text-2xl font-bold">
+                          {speciesBreakdown[s]}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          {SPECIES_LABEL[s]} дутсан
+                        </p>
                       </Card>
                     ))}
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">
                   {(missing ?? []).map((animal: MissingLivestockEntry) => (
-                    <Card key={animal.id} className="gap-3 bg-[#141a2c] p-4 ring-1 ring-white/5">
+                    <Card
+                      key={animal.id}
+                      className="gap-3 bg-[#141a2c] p-4 ring-1 ring-white/5"
+                    >
                       <div className="flex items-center gap-3">
                         <span className="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white/5">
                           {animal.imageUrl ? (
@@ -146,7 +177,10 @@ export default function MissingAnimalsPage() {
                               className="h-full w-full object-cover"
                             />
                           ) : (
-                            <SpeciesIcon species={animal.species} className="size-6 text-[#f2a93c]" />
+                            <SpeciesIcon
+                              species={animal.species}
+                              className="size-6 text-[#f2a93c]"
+                            />
                           )}
                         </span>
                         <div className="flex min-w-0 flex-col gap-0.5">
@@ -184,25 +218,22 @@ export default function MissingAnimalsPage() {
                   ))}
                 </div>
               )}
-
-              <Button
-                variant="brand"
-                size="xl"
-                className="mt-2 w-full bg-linear-to-r from-[#f2a93c] to-[#e08a2c]"
-              >
-                <Megaphone />
-                Хайлтын дохио илгээх
-              </Button>
             </>
           )}
         </TabsContent>
 
-        <TabsContent value="arrived" className="mt-4 flex flex-col items-center gap-2 py-10 text-center">
+        <TabsContent
+          value="arrived"
+          className="mt-4 flex flex-col items-center gap-2 py-10 text-center"
+        >
           {loadingScans ? (
             <p className="text-sm text-gray-500">Ачаалж байна...</p>
           ) : (
             <>
-              <ShieldAlert className="size-8 text-[#f2a93c]" strokeWidth={1.5} />
+              <ShieldAlert
+                className="size-8 text-[#f2a93c]"
+                strokeWidth={1.5}
+              />
               <p className="text-3xl font-bold">{foreignCount}</p>
               <p className="max-w-56 text-sm text-gray-400">
                 өөр өрхийн RFID шошготой мал таны хашаанд илэрлээ

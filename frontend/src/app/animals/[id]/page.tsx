@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Camera,
   DoorOpen,
@@ -12,7 +11,6 @@ import {
   PawPrint,
   Pencil,
   Rabbit,
-  ShieldCheck,
   TriangleAlert,
   Unlock,
 } from "lucide-react";
@@ -27,12 +25,10 @@ import {
   getLivestock,
   getLivestockScans,
   getTag,
-  listAlerts,
   updateLivestock,
   updateLivestockLocation,
   updateLivestockStatus,
   uploadImage,
-  type Alert,
   type TagRegistryEntry,
   type TagStatus,
 } from "@/lib/api";
@@ -65,7 +61,6 @@ function AnimalDetailContent({ id }: { id: string }) {
 
   const { data: animal, error, refresh } = useApi(() => getLivestock(id), id);
   const { data: scans } = useApi(() => getLivestockScans(id), id);
-  const { data: alerts } = useApi(() => listAlerts(), "");
 
   const [tag, setTag] = useState<TagRegistryEntry | null>(null);
   useEffect(() => {
@@ -90,11 +85,6 @@ function AnimalDetailContent({ id }: { id: string }) {
   const [locateError, setLocateError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  const relatedAlerts = useMemo(
-    () => (alerts ?? []).filter((a: Alert) => a.livestockId === id),
-    [alerts, id]
-  );
 
   if (error) {
     return (
@@ -329,25 +319,6 @@ function AnimalDetailContent({ id }: { id: string }) {
                     </p>
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {relatedAlerts.length > 0 ? (
-          <div className="flex flex-col gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">Мэдэгдэл</h2>
-            <div className="flex flex-col gap-2">
-              {relatedAlerts.map((a: Alert) => (
-                <Link key={a.id} href="/notifications">
-                  <Card className="flex-row items-center gap-3 bg-[#141a2c] p-3 ring-1 ring-white/5">
-                    <ShieldCheck className="size-4 shrink-0 text-[#f2a93c]" />
-                    <div className="flex flex-col">
-                      <p className="text-sm font-medium">{a.title}</p>
-                      <p className="text-xs text-gray-400">{a.message}</p>
-                    </div>
-                  </Card>
-                </Link>
               ))}
             </div>
           </div>
