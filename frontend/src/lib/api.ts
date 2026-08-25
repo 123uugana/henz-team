@@ -43,27 +43,40 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return json.data;
 }
 
-async function tryRefresh(): Promise<string | null> {
-  const session = getSession();
-  if (!session) return null;
+// Refresh tokens are single-use: two calls racing on the same expired
+// access token would otherwise both submit it, and the loser gets flagged
+// as token reuse and logged out. Sharing one in-flight request avoids that.
+let refreshInFlight: Promise<string | null> | null = null;
 
-  try {
-    const result = await apiFetch<{
-      accessToken: string;
-      refreshToken: string;
-    }>("/api/auth/refresh", {
-      method: "POST",
-      body: JSON.stringify({ refreshToken: session.refreshToken }),
-    });
-    saveSession({
-      ...session,
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-    });
-    return result.accessToken;
-  } catch {
-    return null;
-  }
+function tryRefresh(): Promise<string | null> {
+  if (refreshInFlight) return refreshInFlight;
+
+  const session = getSession();
+  if (!session) return Promise.resolve(null);
+
+  refreshInFlight = (async () => {
+    try {
+      const result = await apiFetch<{
+        accessToken: string;
+        refreshToken: string;
+      }>("/api/auth/refresh", {
+        method: "POST",
+        body: JSON.stringify({ refreshToken: session.refreshToken }),
+      });
+      saveSession({
+        ...session,
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+      });
+      return result.accessToken;
+    } catch {
+      return null;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+
+  return refreshInFlight;
 }
 
 async function authorizedFetch<T>(

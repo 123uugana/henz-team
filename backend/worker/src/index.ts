@@ -390,7 +390,10 @@ async function createSession(db: ReturnType<typeof drizzle>, env: Env, userId: s
     id: createId('session'),
     userId,
     refreshTokenHash,
-    expiresAt: daysFromNow(30),
+    // Farmers may not open the app for weeks at a stretch; once logged in
+    // with a phone number, keep the session alive rather than force a
+    // re-login from inactivity.
+    expiresAt: daysFromNow(3650),
     createdAt,
   });
 
