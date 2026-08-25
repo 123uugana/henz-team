@@ -21,7 +21,7 @@ export function BottomNav() {
       {/* Reserves scroll space so fixed nav below never covers content. */}
       <div className="h-24 shrink-0" aria-hidden />
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto flex w-full items-center justify-between border-t border-white/10 bg-[#10141f]/95 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-sm sm:max-w-sm">
+      <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto flex w-full items-center justify-between border-t border-slate-200 bg-white/95 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.06)] backdrop-blur-sm transition-colors dark:border-white/10 dark:bg-[#10141f]/95 dark:shadow-none sm:max-w-sm">
         {NAV_ITEMS.map((item) => {
           const active = pathname === item.href;
           const Icon = item.icon;
@@ -32,7 +32,7 @@ export function BottomNav() {
               href={item.href}
               className={cn(
                 "flex flex-1 flex-col items-center gap-1 py-1",
-                active ? "text-white" : "text-gray-500"
+                active ? "text-slate-900 dark:text-white" : "text-slate-500 dark:text-gray-500"
               )}
             >
               <span
@@ -48,7 +48,7 @@ export function BottomNav() {
               <span
                 className={cn(
                   "text-[11px]",
-                  active ? "text-[#f2a93c]" : "text-gray-500"
+                  active ? "text-[#a85b0a] dark:text-[#f2a93c]" : "text-slate-500 dark:text-gray-500"
                 )}
               >
                 {item.label}

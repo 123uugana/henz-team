@@ -119,6 +119,7 @@ export interface AuthUser {
   id: string;
   phoneNumber: string;
   name: string;
+  imageUrl: string | null;
   role: "FARMER" | "ADMIN" | "DEALER";
 }
 
@@ -154,10 +155,21 @@ export function getMe() {
   return authorizedFetch<AuthUser>("/api/auth/me");
 }
 
-export function updateProfile(name: string) {
+export async function logout() {
+  try {
+    return await authorizedFetch<{ loggedOut: boolean }>("/api/auth/logout", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  } finally {
+    clearSession();
+  }
+}
+
+export function updateProfile(input: { name?: string; imageUrl?: string | null }) {
   return authorizedFetch<AuthUser>("/api/auth/me", {
     method: "PATCH",
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(input),
   });
 }
 
@@ -309,7 +321,7 @@ export interface DashboardScan {
   scannedAt: string;
   direction: "ENTER" | "EXIT" | "UNKNOWN";
   epc: string;
-  livestock: { id: string; earNumber: string; name?: string };
+  livestock: { id: string; earNumber: string; name?: string } | null;
 }
 
 export interface Dashboard {
@@ -319,6 +331,37 @@ export interface Dashboard {
   unknownTagCount: number;
   sheepCount: number;
   goatCount: number;
+  readerCount: number;
+  activeReaderCount: number;
+  today: {
+    date: string;
+    totalScans: number;
+    scannedLivestock: number;
+    unscannedLivestock: number;
+    entered: number;
+    exited: number;
+    unknown: number;
+    unknownEpcs: string[];
+    lastScan: {
+      id: string;
+      epc: string;
+      livestockId: string | null;
+      readerId: string | null;
+      direction: "ENTER" | "EXIT" | "UNKNOWN";
+      source: "APP" | "DEVICE";
+      scannedAt: string;
+    } | null;
+  };
+  readers: Array<{
+    id: string;
+    name: string;
+    location?: string;
+    deviceSecretSet: boolean;
+    lastScanAt?: string;
+    lastDirection?: "ENTER" | "EXIT" | "UNKNOWN";
+    lastEpc?: string;
+    isActiveToday: boolean;
+  }>;
   recentScans: DashboardScan[];
 }
 
@@ -338,6 +381,13 @@ export interface MissingLivestockEntry {
 
 export function getMissingLivestock() {
   return authorizedFetch<MissingLivestockEntry[]>("/api/reports/missing");
+}
+
+export function sendSearchSignal() {
+  return authorizedFetch<{ missingCount: number; dealerNotified: boolean }>("/api/search-signal", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 }
 
 export type HistoryRangeKey = "7d" | "1m" | "3m" | "6m" | "1y";
@@ -447,6 +497,10 @@ export function createDealerRegistration(input: {
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export function getMyDealerRegistration() {
+  return authorizedFetch<DealerRegistration | null>("/api/dealer-registrations/me");
 }
 
 export function listDealerRegistrations() {

@@ -1,9 +1,11 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   Camera,
+  Trash2,
   DoorOpen,
   Lock,
   MapPin,
@@ -22,6 +24,7 @@ import { Card } from "@/components/ui/card";
 import { getTagPrefixInfo } from "@/lib/tag-prefix";
 import {
   ApiError,
+  deleteLivestock,
   getLivestock,
   getLivestockScans,
   getTag,
@@ -34,6 +37,7 @@ import {
 } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
+import { resizeImage } from "@/lib/image";
 
 const TAG_STATUS_LABEL: Record<TagStatus, string> = {
   AVAILABLE: "Чөлөөтэй",
@@ -43,10 +47,10 @@ const TAG_STATUS_LABEL: Record<TagStatus, string> = {
 };
 
 const TAG_STATUS_TONE: Record<TagStatus, string> = {
-  AVAILABLE: "bg-white/10 text-gray-300",
+  AVAILABLE: "bg-slate-100 dark:bg-white/5 text-slate-700 dark:text-gray-300",
   CLAIMED: "bg-sky-500/15 text-sky-400",
-  LOCKED: "bg-emerald-400/15 text-emerald-400",
-  DAMAGED: "bg-red-500/15 text-red-400",
+  LOCKED: "bg-emerald-400/15 text-emerald-700 dark:text-emerald-400",
+  DAMAGED: "bg-red-500/15 text-red-600 dark:text-red-400",
 };
 
 export default function AnimalDetailPage() {
@@ -58,6 +62,7 @@ export default function AnimalDetailPage() {
 
 function AnimalDetailContent({ id }: { id: string }) {
   useAuthGuard();
+  const router = useRouter();
 
   const { data: animal, error, refresh } = useApi(() => getLivestock(id), id);
   const { data: scans } = useApi(() => getLivestockScans(id), id);
@@ -84,13 +89,14 @@ function AnimalDetailContent({ id }: { id: string }) {
   const [locating, setLocating] = useState(false);
   const [locateError, setLocateError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (error) {
     return (
       <PhoneFrame>
         <AppHeader backHref="/animals" title="Дэлгэрэнгүй" />
-        <p className="mt-10 text-center text-sm text-gray-500">{error}</p>
+        <p className="mt-10 text-center text-sm text-slate-500 dark:text-gray-400">{error}</p>
       </PhoneFrame>
     );
   }
@@ -99,7 +105,7 @@ function AnimalDetailContent({ id }: { id: string }) {
     return (
       <PhoneFrame>
         <AppHeader backHref="/animals" title="Дэлгэрэнгүй" />
-        <p className="mt-10 text-center text-sm text-gray-500">Ачаалж байна...</p>
+        <p className="mt-10 text-center text-sm text-slate-500 dark:text-gray-400">Ачаалж байна...</p>
       </PhoneFrame>
     );
   }
@@ -111,7 +117,7 @@ function AnimalDetailContent({ id }: { id: string }) {
     setUploading(true);
 
     try {
-      const { url } = await uploadImage(file);
+      const { url } = await uploadImage(await resizeImage(file));
       await updateLivestock(animal.id, {
         earNumber: animal.earNumber,
         name: animal.name,
@@ -128,6 +134,20 @@ function AnimalDetailContent({ id }: { id: string }) {
       setLocateError(err instanceof ApiError ? err.message : "Зураг хадгалж чадсангүй.");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm(`${animal.earNumber} дугаартай малыг бүртгэлээс устгах уу?`)) return;
+    setDeleting(true);
+    setLocateError(null);
+
+    try {
+      await deleteLivestock(animal.id);
+      router.replace("/animals");
+    } catch (err) {
+      setLocateError(err instanceof ApiError ? err.message : "Устгаж чадсангүй.");
+      setDeleting(false);
     }
   };
 
@@ -187,7 +207,7 @@ function AnimalDetailContent({ id }: { id: string }) {
         type="button"
         onClick={() => fileInputRef.current?.click()}
         disabled={uploading}
-        className="relative mt-4 flex h-56 w-full items-center justify-center overflow-hidden bg-linear-to-b from-[#2a3450] to-[#141a2c]"
+        className="relative mt-4 flex h-56 w-full items-center justify-center overflow-hidden bg-linear-to-b from-[#f3e5c8] to-[#fffaf0] dark:from-[#2a3450] dark:to-[#141a2c]"
       >
         {animal.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -197,9 +217,9 @@ function AnimalDetailContent({ id }: { id: string }) {
             className="h-full w-full object-cover"
           />
         ) : animal.species === "SHEEP" ? (
-          <PawPrint className="size-20 text-[#f2a93c]/70" strokeWidth={1} />
+          <PawPrint className="size-20 text-[#a85b0a]/70 dark:text-[#f2a93c]/70" strokeWidth={1} />
         ) : (
-          <Rabbit className="size-20 text-[#f2a93c]/70" strokeWidth={1} />
+          <Rabbit className="size-20 text-[#a85b0a]/70 dark:text-[#f2a93c]/70" strokeWidth={1} />
         )}
         <span className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-full bg-black/50 px-3 py-1.5 text-xs text-white">
           <Camera className="size-3.5" />
@@ -211,9 +231,9 @@ function AnimalDetailContent({ id }: { id: string }) {
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-1">
             <h1 className="text-xl font-bold">{animal.name || animal.earNumber}</h1>
-            <p className="text-xs text-gray-400"># ID: {animal.earNumber}</p>
+            <p className="text-xs text-slate-500 dark:text-gray-400"># ID: {animal.earNumber}</p>
           </div>
-          <Badge className="bg-[#f2a93c]/15 text-[#f2a93c]">
+          <Badge className="bg-[#f2a93c]/15 text-[#a85b0a] dark:text-[#f2a93c]">
             {animal.species === "SHEEP" ? "Хонь" : "Ямаа"}
           </Badge>
         </div>
@@ -221,18 +241,28 @@ function AnimalDetailContent({ id }: { id: string }) {
         <div className="flex flex-col gap-2">
           <Button
             variant="outline"
-            className="w-full border-white/10 bg-transparent text-white hover:bg-white/5"
+            className="w-full border-slate-200 dark:border-white/10 bg-transparent text-slate-700 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-white/5"
+            render={<Link href={`/animals/${animal.id}/edit`} />}
           >
             <Pencil />
             Засах
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={deleting}
+            onClick={handleDelete}
+            className="w-full"
+          >
+            <Trash2 />
+            {deleting ? "Устгаж байна..." : "Бүртгэлээс устгах"}
           </Button>
           <Button
             variant="outline"
             onClick={toggleMissing}
             className={
               animal.status === "MISSING"
-                ? "w-full border-emerald-500/30 bg-transparent text-emerald-400 hover:bg-emerald-500/10"
-                : "w-full border-red-500/30 bg-transparent text-red-400 hover:bg-red-500/10"
+                ? "w-full border-emerald-500/30 bg-transparent text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
+                : "w-full border-red-500/30 bg-transparent text-red-600 dark:text-red-400 hover:bg-red-500/10"
             }
           >
             <TriangleAlert />
@@ -244,8 +274,8 @@ function AnimalDetailContent({ id }: { id: string }) {
 
         {animal.rfidTag ? (
           <div className="flex flex-col gap-2">
-            <h2 className="text-sm font-semibold text-gray-200">RFID шошго</h2>
-            <Card className="flex-row items-center gap-3 bg-[#141a2c] p-3 ring-1 ring-white/5">
+            <h2 className="text-sm font-semibold text-slate-700 dark:text-gray-300">RFID шошго</h2>
+            <Card className="flex-row items-center gap-3 bg-white dark:bg-[#141a2c] p-3 ring-1 ring-slate-200/80 dark:ring-white/5">
               <span className={`flex size-10 shrink-0 items-center justify-center rounded-full ${tagInfo!.bgClass}`}>
                 {tag?.status === "LOCKED" ? (
                   <Lock className={`size-4 ${tagInfo!.textClass}`} />
@@ -265,52 +295,52 @@ function AnimalDetailContent({ id }: { id: string }) {
 
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-200">Байршил</h2>
+            <h2 className="text-sm font-semibold text-slate-700 dark:text-gray-300">Байршил</h2>
             <button
               type="button"
               onClick={handleLocate}
               disabled={locating}
-              className="flex items-center gap-1 text-xs font-medium text-[#f2a93c] disabled:opacity-50"
+              className="flex items-center gap-1 text-xs font-medium text-[#a85b0a] dark:text-[#f2a93c] disabled:opacity-50"
             >
               <Navigation className="size-3.5" />
               {locating ? "Тогтоож байна..." : "GPS-ээс авах"}
             </button>
           </div>
-          <Card className="gap-2 bg-[#141a2c] p-4 ring-1 ring-white/5">
+          <Card className="gap-2 bg-white dark:bg-[#141a2c] p-4 ring-1 ring-slate-200/80 dark:ring-white/5">
             <div className="flex items-center gap-2 text-sm">
-              <MapPin className="size-4 shrink-0 text-[#f2a93c]" />
+              <MapPin className="size-4 shrink-0 text-[#a85b0a] dark:text-[#f2a93c]" />
               {animal.location ? (
                 <span>
                   {animal.location.latitude.toFixed(5)}, {animal.location.longitude.toFixed(5)}
                 </span>
               ) : (
-                <span className="text-gray-500">Байршил тодорхойгүй байна.</span>
+                <span className="text-slate-500 dark:text-gray-400">Байршил тодорхойгүй байна.</span>
               )}
             </div>
             {locateError ? (
-              <p className="text-xs text-red-400">{locateError}</p>
+              <p className="text-xs text-red-600 dark:text-red-400">{locateError}</p>
             ) : null}
           </Card>
         </div>
 
         {scans && scans.length > 0 ? (
           <div className="flex flex-col gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">Скан түүх</h2>
+            <h2 className="text-sm font-semibold text-slate-700 dark:text-gray-300">Скан түүх</h2>
 
             <div className="flex flex-col gap-4">
               {scans.map((scan) => (
                 <div key={scan.id} className="flex gap-3">
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/5">
-                    <DoorOpen className="size-4 text-[#f2a93c]" strokeWidth={1.75} />
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-slate-100 dark:bg-white/5">
+                    <DoorOpen className="size-4 text-[#a85b0a] dark:text-[#f2a93c]" strokeWidth={1.75} />
                   </span>
                   <div className="flex flex-col gap-0.5">
                     <div className="flex items-center gap-2 text-sm font-medium">
                       {scan.reader?.name ?? "Тодорхойгүй уншигч"}
-                      <span className="text-xs font-normal text-gray-500">
+                      <span className="text-xs font-normal text-slate-500 dark:text-gray-400">
                         {new Date(scan.scannedAt).toLocaleString("mn-MN")}
                       </span>
                     </div>
-                    <p className="text-sm text-gray-400">
+                    <p className="text-sm text-slate-500 dark:text-gray-400">
                       {scan.direction === "ENTER"
                         ? "Сүрэгт орсон."
                         : scan.direction === "EXIT"

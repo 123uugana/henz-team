@@ -14,6 +14,11 @@ async function makeDealer(userId: string) {
   await db.update(users).set({ role: 'DEALER' }).where(eq(users.id, userId));
 }
 
+async function makeAdmin(userId: string) {
+  const db = drizzle(testEnv.DB);
+  await db.update(users).set({ role: 'ADMIN' }).where(eq(users.id, userId));
+}
+
 type ApiBody = {
   success: boolean;
   data?: any;
@@ -137,6 +142,36 @@ describe('refresh token rotation', () => {
   });
 });
 
+describe('logout', () => {
+  it('keeps a session active until logout and revokes it immediately afterwards', async () => {
+    const tokens = await registerAndLogin('99005667');
+    const payloadPart = tokens.accessToken.split('.')[1];
+    const payload = JSON.parse(atob(payloadPart.replace(/-/g, '+').replace(/_/g, '/')));
+    expect(payload.exp).toBeUndefined();
+    expect(payload.sid).toBeTruthy();
+
+    const before = await api('/api/auth/me', authorized(tokens.accessToken));
+    expect(before.status).toBe(200);
+
+    const loggedOut = await api(
+      '/api/auth/logout',
+      json('POST', {}, tokens.accessToken),
+    );
+    expect(loggedOut.status).toBe(200);
+    expect(loggedOut.body.data).toEqual({ loggedOut: true });
+
+    const after = await api('/api/auth/me', authorized(tokens.accessToken));
+    expect(after.status).toBe(401);
+    expect(after.body.code).toBe('SESSION_REVOKED');
+
+    const refresh = await api(
+      '/api/auth/refresh',
+      json('POST', { refreshToken: tokens.refreshToken }),
+    );
+    expect(refresh.status).toBe(401);
+  });
+});
+
 describe('profile', () => {
   it('updates the profile name', async () => {
     const tokens = await registerAndLogin('99006677');
@@ -156,6 +191,34 @@ describe('profile', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data.phoneNumber).toBe('99007788');
+    expect(res.body.data.imageUrl).toBeNull();
+  });
+
+  it('uploads and persists a profile image without changing the name', async () => {
+    const tokens = await registerAndLogin('99007889');
+    const auth = tokens.accessToken;
+    await api('/api/auth/me', json('PATCH', { name: 'Саруул' }, auth));
+
+    const form = new FormData();
+    form.append('file', new File([new Uint8Array([137, 80, 78, 71])], 'avatar.png', { type: 'image/png' }));
+    const uploaded = await api('/api/uploads', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${auth}` },
+      body: form,
+    });
+    expect(uploaded.status).toBe(200);
+    expect(uploaded.body.data.url).toBe('data:image/png;base64,iVBORw==');
+
+    const updated = await api(
+      '/api/auth/me',
+      json('PATCH', { imageUrl: uploaded.body.data.url }, auth),
+    );
+    expect(updated.status).toBe(200);
+    expect(updated.body.data.name).toBe('Саруул');
+    expect(updated.body.data.imageUrl).toBe(uploaded.body.data.url);
+
+    const me = await api('/api/auth/me', authorized(auth));
+    expect(me.body.data.imageUrl).toBe(uploaded.body.data.url);
   });
 });
 
@@ -203,6 +266,8 @@ describe('livestock CRUD', () => {
     expect(updated.status).toBe(200);
     expect(updated.body.data.name).toBe('Улаан хонь');
     expect(updated.body.data.rfidTag).toBeNull();
+    const released = await api('/api/rfid/tags/E280-0001', authorized(auth));
+    expect(released.body.data.status).toBe('AVAILABLE');
 
     const deleted = await api(`/api/livestock/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${auth}` } });
     expect(deleted.status).toBe(200);
@@ -258,6 +323,34 @@ describe('livestock CRUD', () => {
     expect(byGender.body.data.items).toHaveLength(1);
     expect(byGender.body.data.items[0].earNumber).toBe('F-1');
   });
+
+  it('normalizes RFID EPCs and blocks tags claimed by another user', async () => {
+    const owner = await registerAndLogin('99400011');
+    await api('/api/rfid/tags/claim', json('POST', { epc: 'hh-4004' }, owner.accessToken));
+
+    const created = await api(
+      '/api/livestock',
+      json(
+        'POST',
+        { earNumber: 'RFID-1', species: 'SHEEP', gender: 'FEMALE', rfidEpc: 'hh-4004' },
+        owner.accessToken,
+      ),
+    );
+    expect(created.status).toBe(200);
+    expect(created.body.data.rfidTag.epc).toBe('HH-4004');
+
+    const other = await registerAndLogin('99400022');
+    const blocked = await api(
+      '/api/livestock',
+      json(
+        'POST',
+        { earNumber: 'RFID-2', species: 'GOAT', gender: 'MALE', rfidEpc: 'HH-4004' },
+        other.accessToken,
+      ),
+    );
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.code).toBe('TAG_ALREADY_CLAIMED');
+  });
 });
 
 describe('status alerts', () => {
@@ -301,6 +394,31 @@ describe('status alerts', () => {
     const alertsAfter = await api('/api/alerts', authorized(auth));
     expect(alertsAfter.body.data).toHaveLength(2);
     expect(alertsAfter.body.data[0].type).toBe('FOUND');
+  });
+
+  it('sends a search signal only when livestock is marked missing', async () => {
+    const tokens = await registerAndLogin('99124455');
+    const auth = tokens.accessToken;
+
+    const empty = await api('/api/search-signal', json('POST', {}, auth));
+    expect(empty.status).toBe(409);
+    expect(empty.body.code).toBe('NO_MISSING_LIVESTOCK');
+
+    const created = await api(
+      '/api/livestock',
+      json('POST', { earNumber: 'SEARCH-1', species: 'SHEEP', gender: 'FEMALE' }, auth),
+    );
+    await api(
+      `/api/livestock/${created.body.data.id}/status`,
+      json('PATCH', { status: 'MISSING' }, auth),
+    );
+
+    const signal = await api('/api/search-signal', json('POST', {}, auth));
+    expect(signal.status).toBe(200);
+    expect(signal.body.data).toEqual({ missingCount: 1, dealerNotified: false });
+
+    const alerts = await api('/api/alerts', authorized(auth));
+    expect(alerts.body.data.some((item: any) => item.title === 'Хайлтын дохио илгээгдлээ')).toBe(true);
   });
 });
 
@@ -565,6 +683,44 @@ describe('rfid device integration', () => {
     const recent = await api('/api/scans', authorized(otherTokens.accessToken));
     expect(recent.body.data[0].reader).toBeNull();
   });
+
+  it('returns real reader metadata and enforces livestock ownership in scan history', async () => {
+    const owner = await registerAndLogin('99410011');
+    const created = await api(
+      '/api/livestock',
+      json(
+        'POST',
+        { earNumber: 'SCAN-1', species: 'SHEEP', gender: 'FEMALE', rfidEpc: 'E280-SCAN-HISTORY' },
+        owner.accessToken,
+      ),
+    );
+    const livestockId = created.body.data.id;
+
+    await api(
+      '/api/devices/readers',
+      json('POST', { id: 'history-reader-1', name: 'Зүүн хаалганы уншигч' }, owner.accessToken),
+    );
+    await api(
+      '/api/scans',
+      json(
+        'POST',
+        { scans: [{ epc: 'e280-scan-history', readerId: 'history-reader-1', direction: 'ENTER' }] },
+        owner.accessToken,
+      ),
+    );
+
+    const history = await api(`/api/livestock/${livestockId}/scans`, authorized(owner.accessToken));
+    expect(history.status).toBe(200);
+    expect(history.body.data).toHaveLength(1);
+    expect(history.body.data[0].reader).toEqual({
+      id: 'history-reader-1',
+      name: 'Зүүн хаалганы уншигч',
+    });
+
+    const other = await registerAndLogin('99410022');
+    const hidden = await api(`/api/livestock/${livestockId}/scans`, authorized(other.accessToken));
+    expect(hidden.status).toBe(404);
+  });
 });
 
 describe('push tokens', () => {
@@ -664,6 +820,20 @@ describe('movement history', () => {
     expect(res.body.data.added).toBe(2);
   });
 
+  it('records deletion as a removal and keeps historical totals consistent', async () => {
+    const tokens = await registerAndLogin('99257788');
+    const auth = tokens.accessToken;
+    const first = await api('/api/livestock', json('POST', { earNumber: 'HR-1', species: 'SHEEP', gender: 'FEMALE' }, auth));
+    await api('/api/livestock', json('POST', { earNumber: 'HR-2', species: 'GOAT', gender: 'MALE' }, auth));
+    await api(`/api/livestock/${first.body.data.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${auth}` } });
+
+    const history = await api('/api/reports/history?range=7d', authorized(auth));
+    expect(history.body.data.added).toBe(2);
+    expect(history.body.data.removed).toBe(1);
+    expect(history.body.data.todayDelta).toBe(1);
+    expect(history.body.data.points.at(-1).total).toBe(1);
+  });
+
   it('falls back to 7d for an unknown range', async () => {
     const tokens = await registerAndLogin('99267788');
     const res = await api('/api/reports/history?range=nonsense', authorized(tokens.accessToken));
@@ -758,6 +928,18 @@ describe('rfid tag registry', () => {
     const again = await api('/api/rfid/tags/claim', json('POST', { epc: 'HH-3003' }, auth));
     expect(again.status).toBe(200);
   });
+
+  it('normalizes tag EPC casing across claim and lookup', async () => {
+    const tokens = await registerAndLogin('99420011');
+    const claimed = await api(
+      '/api/rfid/tags/claim',
+      json('POST', { epc: 'hh-5005' }, tokens.accessToken),
+    );
+    expect(claimed.body.data.epc).toBe('HH-5005');
+
+    const fetched = await api('/api/rfid/tags/hh-5005', authorized(tokens.accessToken));
+    expect(fetched.body.data).toMatchObject({ epc: 'HH-5005', status: 'LOCKED' });
+  });
 });
 
 describe('dealer registrations', () => {
@@ -774,6 +956,17 @@ describe('dealer registrations', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.status).toBe('PENDING');
     expect(res.body.data.orgName).toBe('Баянгол Малын Хоршоо');
+
+    const mine = await api('/api/dealer-registrations/me', authorized(tokens.accessToken));
+    expect(mine.status).toBe(200);
+    expect(mine.body.data.id).toBe(res.body.data.id);
+
+    const duplicate = await api(
+      '/api/dealer-registrations',
+      json('POST', { orgName: 'Давхардсан', contact: '1', prefixRequested: 'DUP-' }, tokens.accessToken),
+    );
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body.code).toBe('REGISTRATION_EXISTS');
   });
 
   it('rejects an incomplete request', async () => {
@@ -783,6 +976,40 @@ describe('dealer registrations', () => {
       json('POST', { orgName: '', contact: '', prefixRequested: '' }, tokens.accessToken),
     );
     expect(res.status).toBe(400);
+  });
+
+  it('promotes the requester to DEALER when an admin approves the request', async () => {
+    const requester = await registerAndLogin('99430011');
+    const registration = await api(
+      '/api/dealer-registrations',
+      json(
+        'POST',
+        { orgName: 'Хэнтий хоршоо', contact: '99430011', prefixRequested: 'EXT-' },
+        requester.accessToken,
+      ),
+    );
+
+    const admin = await registerAndLogin('99430022');
+    await makeAdmin(admin.user.id);
+    const decided = await api(
+      `/api/admin/dealer-registrations/${registration.body.data.id}`,
+      json('PATCH', { status: 'APPROVED' }, admin.accessToken),
+    );
+    expect(decided.status).toBe(200);
+    expect(decided.body.data.status).toBe('APPROVED');
+
+    const me = await api('/api/auth/me', authorized(requester.accessToken));
+    expect(me.body.data.role).toBe('DEALER');
+
+    const dealerFarmers = await api('/api/dealer/farmers', authorized(requester.accessToken));
+    expect(dealerFarmers.status).toBe(200);
+
+    const repeated = await api(
+      `/api/admin/dealer-registrations/${registration.body.data.id}`,
+      json('PATCH', { status: 'REJECTED' }, admin.accessToken),
+    );
+    expect(repeated.status).toBe(409);
+    expect(repeated.body.code).toBe('REGISTRATION_ALREADY_DECIDED');
   });
 });
 

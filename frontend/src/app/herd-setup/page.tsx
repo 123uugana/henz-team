@@ -5,14 +5,14 @@ import { Button } from "@/components/ui/button";
 
 export default function HerdSetupIntroPage() {
   return (
-    <PhoneFrame className="items-center justify-between">
-      <div className="relative mt-4 flex size-56 items-center justify-center rounded-full bg-[#141a2c] ring-1 ring-[#f2a93c]/20">
+    <PhoneFrame showThemeToggle className="items-center justify-between">
+      <div className="relative mt-4 flex size-56 items-center justify-center rounded-full bg-white dark:bg-[#141a2c] ring-1 ring-[#f2a93c]/20">
         <div className="absolute inset-6 rounded-full bg-[#f2a93c]/10 blur-2xl" />
         <div className="grid grid-cols-4 gap-3 opacity-90">
           {Array.from({ length: 12 }).map((_, i) => (
             <PawPrint
               key={i}
-              className="size-4 text-[#f2a93c]"
+              className="size-4 text-[#a85b0a] dark:text-[#f2a93c]"
               strokeWidth={1.5}
             />
           ))}
@@ -21,7 +21,7 @@ export default function HerdSetupIntroPage() {
 
       <div className="flex flex-col items-center gap-2 text-center">
         <h1 className="text-2xl font-bold">Тавтай морил!</h1>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-slate-500 dark:text-gray-400">
           Малынхаа дугаарыг уншуулж, апп-даа нэмнэ үү
         </p>
       </div>
@@ -38,7 +38,7 @@ export default function HerdSetupIntroPage() {
         </Button>
         <Button
           variant="link"
-          className="h-auto p-0 text-sm text-[#f2a93c]/90"
+          className="h-auto p-0 text-sm text-[#a85b0a]/90 dark:text-[#f2a93c]/90"
           render={<Link href="/dashboard" />}
         >
           Нүүр хуудасруу шилжих

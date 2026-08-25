@@ -59,8 +59,8 @@ export default function HistoryPage() {
             className={cn(
               "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
               range === value
-                ? "border-[#f2a93c] bg-[#1c1408] text-[#f2a93c]"
-                : "border-white/10 bg-[#161c2c] text-gray-400"
+                ? "border-[#f2a93c] bg-amber-50 dark:bg-[#1c1408] text-[#a85b0a] dark:text-[#f2a93c]"
+                : "border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] text-slate-500 dark:text-gray-400"
             )}
           >
             {label}
@@ -69,80 +69,80 @@ export default function HistoryPage() {
       </div>
 
       {loading ? (
-        <p className="mt-10 text-center text-sm text-gray-500">Ачаалж байна...</p>
+        <p className="mt-10 text-center text-sm text-slate-500 dark:text-gray-400">Ачаалж байна...</p>
       ) : error ? (
-        <p className="mt-10 text-center text-sm text-red-400">{error}</p>
+        <p className="mt-10 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : history ? (
         <>
           <div className="mt-4 grid grid-cols-3 gap-2">
-            <Card className="gap-1 bg-[#141a2c] p-3 ring-1 ring-white/5">
+            <Card className="gap-1 bg-white dark:bg-[#141a2c] p-3 ring-1 ring-slate-200/80 dark:ring-white/5">
               <p className="text-lg font-bold">{latestTotal}</p>
-              <p className="text-[11px] text-gray-400">сүргийн бүртгэлтэй мал</p>
+              <p className="text-[11px] text-slate-500 dark:text-gray-400">сүргийн бүртгэлтэй мал</p>
             </Card>
-            <Card className="gap-1 bg-[#141a2c] p-3 ring-1 ring-white/5">
+            <Card className="gap-1 bg-white dark:bg-[#141a2c] p-3 ring-1 ring-slate-200/80 dark:ring-white/5">
               <p className="text-lg font-bold">
-                <span className="text-emerald-400">+{history.added}</span>
+                <span className="text-emerald-700 dark:text-emerald-400">+{history.added}</span>
                 {" / "}
-                <span className="text-red-400">-{history.removed}</span>
+                <span className="text-red-600 dark:text-red-400">-{history.removed}</span>
               </p>
-              <p className="text-[11px] text-gray-400">
+              <p className="text-[11px] text-slate-500 dark:text-gray-400">
                 Цэвэр: {history.added - history.removed >= 0 ? "+" : ""}
                 {history.added - history.removed}
               </p>
             </Card>
-            <Card className="gap-1 bg-[#141a2c] p-3 ring-1 ring-white/5">
+            <Card className="gap-1 bg-white dark:bg-[#141a2c] p-3 ring-1 ring-slate-200/80 dark:ring-white/5">
               <p
                 className={cn(
                   "text-lg font-bold",
-                  history.todayDelta < 0 ? "text-red-400" : "text-emerald-400"
+                  history.todayDelta < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"
                 )}
               >
                 {history.todayDelta > 0 ? "+" : ""}
                 {history.todayDelta}
               </p>
-              <p className="text-[11px] text-gray-400">өнөөдрийн өөрчлөлт</p>
+              <p className="text-[11px] text-slate-500 dark:text-gray-400">өнөөдрийн өөрчлөлт</p>
             </Card>
           </div>
 
           <div className="mt-6 flex flex-col gap-2">
-            <h2 className="text-sm font-semibold text-gray-200">
+            <h2 className="text-sm font-semibold text-slate-700 dark:text-gray-300">
               Нийт малын тооны график
             </h2>
-            <Card className="bg-[#141a2c] p-3 ring-1 ring-white/5">
+            <Card className="bg-white dark:bg-[#141a2c] p-3 ring-1 ring-slate-200/80 dark:ring-white/5">
               <div className="h-48 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={history.points} margin={{ top: 8, right: 8, bottom: 0, left: -24 }}>
-                    <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
+                    <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
                     <XAxis
                       dataKey="label"
-                      tick={{ fill: "#8b93a7", fontSize: 10 }}
-                      axisLine={{ stroke: "rgba(255,255,255,0.1)" }}
+                      tick={{ fill: "var(--chart-axis)", fontSize: 10 }}
+                      axisLine={{ stroke: "var(--chart-grid)" }}
                       tickLine={false}
                       interval="preserveStartEnd"
                     />
                     <YAxis
-                      tick={{ fill: "#8b93a7", fontSize: 10 }}
+                      tick={{ fill: "var(--chart-axis)", fontSize: 10 }}
                       axisLine={false}
                       tickLine={false}
                       width={32}
                     />
                     <Tooltip
                       contentStyle={{
-                        background: "#1a2030",
-                        border: "1px solid rgba(255,255,255,0.1)",
+                        background: "var(--chart-tooltip-bg)",
+                        border: "1px solid var(--chart-tooltip-border)",
                         borderRadius: 12,
                         fontSize: 12,
-                        color: "#fff",
+                        color: "var(--chart-tooltip-fg)",
                       }}
-                      labelStyle={{ color: "#8b93a7" }}
+                      labelStyle={{ color: "var(--chart-axis)" }}
                     />
                     <Line
                       type="monotone"
                       dataKey="total"
-                      stroke="#f2a93c"
+                      stroke="var(--chart-accent)"
                       strokeWidth={2}
                       dot={false}
-                      activeDot={{ r: 4, fill: "#f2a93c" }}
+                      activeDot={{ r: 4, fill: "var(--chart-accent)" }}
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -152,7 +152,7 @@ export default function HistoryPage() {
 
           <Button
             variant="outline"
-            className="mt-6 w-full border-white/10 bg-transparent text-white hover:bg-white/5"
+            className="mt-6 w-full border-slate-200 dark:border-white/10 bg-transparent text-slate-700 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-white/5"
             onClick={() => downloadCsv(history.points)}
           >
             <FileDown className="size-4" />

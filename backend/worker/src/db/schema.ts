@@ -6,6 +6,7 @@ export const users = sqliteTable(
     id: text('id').primaryKey(),
     phoneNumber: text('phone_number').notNull(),
     name: text('name').notNull().default(''),
+    imageUrl: text('image_url'),
     role: text('role', { enum: ['FARMER', 'ADMIN', 'DEALER'] }).notNull().default('FARMER'),
     aimag: text('aimag'),
     sum: text('sum'),
@@ -91,6 +92,23 @@ export const livestock = sqliteTable(
     ),
     index('livestock_user_id_idx').on(table.userId),
     index('livestock_status_idx').on(table.status),
+  ],
+);
+
+export const livestockRemovals = sqliteTable(
+  'livestock_removals',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    livestockId: text('livestock_id').notNull(),
+    livestockCreatedAt: text('livestock_created_at').notNull(),
+    removedAt: text('removed_at').notNull(),
+  },
+  (table) => [
+    index('livestock_removals_user_id_idx').on(table.userId),
+    index('livestock_removals_removed_at_idx').on(table.removedAt),
   ],
 );
 

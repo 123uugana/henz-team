@@ -21,10 +21,10 @@ const STATUS_LABEL: Record<TagStatus, string> = {
 };
 
 const STATUS_TONE: Record<TagStatus, string> = {
-  AVAILABLE: "bg-white/10 text-gray-300",
-  CLAIMED: "bg-sky-500/15 text-sky-400",
-  LOCKED: "bg-emerald-400/15 text-emerald-400",
-  DAMAGED: "bg-red-500/15 text-red-400",
+  AVAILABLE: "bg-slate-100 dark:bg-white/5 text-slate-700 dark:text-gray-300",
+  CLAIMED: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
+  LOCKED: "bg-emerald-400/15 text-emerald-700 dark:text-emerald-400",
+  DAMAGED: "bg-red-500/15 text-red-600 dark:text-red-400",
 };
 
 const FILTERS: { value: TagStatus | "ALL"; label: string }[] = [
@@ -63,8 +63,8 @@ export default function AdminTagsPage() {
             className={cn(
               "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
               filter === value
-                ? "border-[#f2a93c] bg-[#1c1408] text-[#f2a93c]"
-                : "border-white/10 bg-[#161c2c] text-gray-400"
+                ? "border-[#f2a93c] bg-amber-50 dark:bg-[#1c1408] text-[#a85b0a] dark:text-[#f2a93c]"
+                : "border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] text-slate-500 dark:text-gray-400"
             )}
           >
             {label}
@@ -73,15 +73,15 @@ export default function AdminTagsPage() {
       </div>
 
       {loading ? (
-        <p className="mt-10 text-center text-sm text-gray-500">Ачаалж байна...</p>
+        <p className="mt-10 text-center text-sm text-slate-500 dark:text-gray-400">Ачаалж байна...</p>
       ) : error ? (
-        <p className="mt-10 text-center text-sm text-red-400">{error}</p>
+        <p className="mt-10 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : (
         <div className="mt-4 flex flex-col gap-2">
           {filtered.map((tag) => {
             const info = getTagPrefixInfo(tag.epc);
             return (
-              <Card key={tag.epc} className="gap-3 bg-[#141a2c] p-3 ring-1 ring-white/5">
+              <Card key={tag.epc} className="gap-3 bg-white dark:bg-[#141a2c] p-3 ring-1 ring-slate-200/80 dark:ring-white/5">
                 <div className="flex items-center gap-3">
                   <span className={`flex size-10 shrink-0 items-center justify-center rounded-full ${info.bgClass}`}>
                     {tag.status === "LOCKED" ? (
@@ -92,7 +92,7 @@ export default function AdminTagsPage() {
                   </span>
                   <div className="flex min-w-0 flex-1 flex-col">
                     <p className="text-sm font-semibold">{tag.epc}</p>
-                    <p className="truncate text-xs text-gray-500">{info.label}</p>
+                    <p className="truncate text-xs text-slate-500 dark:text-gray-400">{info.label}</p>
                   </div>
                   <Badge className={STATUS_TONE[tag.status]}>
                     {STATUS_LABEL[tag.status]}
@@ -104,7 +104,7 @@ export default function AdminTagsPage() {
                     variant="outline"
                     size="sm"
                     onClick={() => handleUnlock(tag.epc)}
-                    className="w-full border-white/10 bg-transparent text-white hover:bg-white/5"
+                    className="w-full border-slate-200 dark:border-white/10 bg-transparent text-slate-700 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-white/5"
                   >
                     <Unlock className="size-3.5" />
                     Тайлах
@@ -115,7 +115,7 @@ export default function AdminTagsPage() {
           })}
 
           {filtered.length === 0 ? (
-            <p className="mt-6 text-center text-sm text-gray-500">
+            <p className="mt-6 text-center text-sm text-slate-500 dark:text-gray-400">
               Энэ төлөвт шошго алга.
             </p>
           ) : null}

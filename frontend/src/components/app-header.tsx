@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Settings } from "lucide-react";
 import { BackButton } from "@/components/back-button";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 
 export function AppHeader({
@@ -22,15 +23,18 @@ export function AppHeader({
         </div>
       </div>
 
-      <Button
-        variant="ghost"
-        size="icon-lg"
-        aria-label="Тохиргоо"
-        className="rounded-full text-gray-300 hover:bg-white/5 hover:text-gray-300"
-        render={<Link href="/profile" />}
-      >
-        <Settings />
-      </Button>
+      <div className="flex items-center">
+        <ThemeToggle />
+        <Button
+          variant="ghost"
+          size="icon-lg"
+          aria-label="Тохиргоо"
+          className="rounded-full text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-gray-300 dark:hover:bg-white/5 dark:hover:text-gray-300"
+          render={<Link href="/profile" />}
+        >
+          <Settings />
+        </Button>
+      </div>
     </div>
   );
 }

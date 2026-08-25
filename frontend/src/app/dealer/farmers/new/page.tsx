@@ -48,7 +48,7 @@ export default function AddFarmerPage() {
 
       <div className="mt-8 flex flex-col gap-5">
         <div className="flex flex-col gap-2">
-          <Label htmlFor="phoneNumber" className="text-gray-300">
+          <Label htmlFor="phoneNumber" className="text-slate-700 dark:text-gray-300">
             Утасны дугаар
           </Label>
           <Input
@@ -57,12 +57,12 @@ export default function AddFarmerPage() {
             value={phoneNumber}
             onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, "").slice(0, 8))}
             placeholder="Жишээ: 99112233"
-            className="h-14 border-white/10 bg-[#161c2c] px-4 py-0 text-base text-white placeholder:text-gray-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
+            className="h-14 border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] px-4 py-0 text-base text-slate-900 dark:text-white placeholder:text-slate-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
           />
         </div>
 
         <div className="flex flex-col gap-2">
-          <Label htmlFor="name" className="text-gray-300">
+          <Label htmlFor="name" className="text-slate-700 dark:text-gray-300">
             Нэр
           </Label>
           <Input
@@ -70,13 +70,13 @@ export default function AddFarmerPage() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Жишээ: Б.Дорж"
-            className="h-14 border-white/10 bg-[#161c2c] px-4 py-0 text-base text-white placeholder:text-gray-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
+            className="h-14 border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] px-4 py-0 text-base text-slate-900 dark:text-white placeholder:text-slate-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
           />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="aimag" className="text-gray-300">
+            <Label htmlFor="aimag" className="text-slate-700 dark:text-gray-300">
               Аймаг (заавал биш)
             </Label>
             <Input
@@ -84,12 +84,12 @@ export default function AddFarmerPage() {
               value={aimag}
               onChange={(e) => setAimag(e.target.value)}
               placeholder="Жишээ: Төв"
-              className="h-14 border-white/10 bg-[#161c2c] px-4 py-0 text-base text-white placeholder:text-gray-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
+              className="h-14 border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] px-4 py-0 text-base text-slate-900 dark:text-white placeholder:text-slate-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
             />
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="sum" className="text-gray-300">
+            <Label htmlFor="sum" className="text-slate-700 dark:text-gray-300">
               Сум (заавал биш)
             </Label>
             <Input
@@ -97,12 +97,12 @@ export default function AddFarmerPage() {
               value={sum}
               onChange={(e) => setSum(e.target.value)}
               placeholder="Жишээ: Зуунмод"
-              className="h-14 border-white/10 bg-[#161c2c] px-4 py-0 text-base text-white placeholder:text-gray-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
+              className="h-14 border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] px-4 py-0 text-base text-slate-900 dark:text-white placeholder:text-slate-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
             />
           </div>
         </div>
 
-        {error ? <p className="text-sm text-red-400">{error}</p> : null}
+        {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       </div>
 
       <Button

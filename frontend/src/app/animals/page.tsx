@@ -37,9 +37,9 @@ const STATUS_LABEL: Record<LivestockStatus, string> = {
 };
 
 const STATUS_TONE: Record<LivestockStatus, string> = {
-  ACTIVE: "bg-emerald-400/15 text-emerald-400",
-  MISSING: "bg-red-500/15 text-red-400",
-  INACTIVE: "bg-white/10 text-gray-300",
+  ACTIVE: "bg-emerald-400/15 text-emerald-700 dark:text-emerald-400",
+  MISSING: "bg-red-500/15 text-red-600 dark:text-red-400",
+  INACTIVE: "bg-slate-100 dark:bg-white/5 text-slate-700 dark:text-gray-300",
 };
 
 const GENDER_LABEL: Record<Gender, string> = {
@@ -113,12 +113,12 @@ export default function AnimalListPage() {
 
       <div className="mt-6 flex flex-col gap-3">
         <div className="relative">
-          <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-gray-500" />
+          <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-500 dark:text-gray-400" />
           <Input
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Нэр, дугаараар хайх..."
-            className="h-11 border-white/10 bg-[#161c2c] pl-10 py-0 text-sm text-white placeholder:text-gray-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
+            className="h-11 border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] pl-10 py-0 text-sm text-slate-900 dark:text-white placeholder:text-slate-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
           />
         </div>
 
@@ -130,12 +130,12 @@ export default function AnimalListPage() {
               resetToFirstPage();
             }}
           >
-            <SelectTrigger className="h-9 w-full border border-white/10 bg-[#161c2c] text-xs text-gray-300">
+            <SelectTrigger className="h-9 w-full border border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] text-xs text-slate-700 dark:text-gray-300">
               <SelectValue>
                 {(value: LivestockStatus | "ALL") => STATUS_FILTER_LABEL[value]}
               </SelectValue>
             </SelectTrigger>
-            <SelectContent className="bg-[#161c2c] text-white ring-white/10">
+            <SelectContent className="bg-white dark:bg-[#161c2c] text-slate-900 dark:text-white ring-slate-200 dark:ring-white/10">
               <SelectItem value="ALL">Бүх статус</SelectItem>
               <SelectItem value="ACTIVE">Идэвхтэй</SelectItem>
               <SelectItem value="MISSING">Алга</SelectItem>
@@ -150,12 +150,12 @@ export default function AnimalListPage() {
               resetToFirstPage();
             }}
           >
-            <SelectTrigger className="h-9 w-full border border-white/10 bg-[#161c2c] text-xs text-gray-300">
+            <SelectTrigger className="h-9 w-full border border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] text-xs text-slate-700 dark:text-gray-300">
               <SelectValue>
                 {(value: Species | "ALL") => SPECIES_FILTER_LABEL[value]}
               </SelectValue>
             </SelectTrigger>
-            <SelectContent className="bg-[#161c2c] text-white ring-white/10">
+            <SelectContent className="bg-white dark:bg-[#161c2c] text-slate-900 dark:text-white ring-slate-200 dark:ring-white/10">
               <SelectItem value="ALL">Бүх төрөл</SelectItem>
               <SelectItem value="SHEEP">Хонь</SelectItem>
               <SelectItem value="GOAT">Ямаа</SelectItem>
@@ -169,12 +169,12 @@ export default function AnimalListPage() {
               resetToFirstPage();
             }}
           >
-            <SelectTrigger className="h-9 w-full border border-white/10 bg-[#161c2c] text-xs text-gray-300">
+            <SelectTrigger className="h-9 w-full border border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] text-xs text-slate-700 dark:text-gray-300">
               <SelectValue>
                 {(value: Gender | "ALL") => GENDER_FILTER_LABEL[value]}
               </SelectValue>
             </SelectTrigger>
-            <SelectContent className="bg-[#161c2c] text-white ring-white/10">
+            <SelectContent className="bg-white dark:bg-[#161c2c] text-slate-900 dark:text-white ring-slate-200 dark:ring-white/10">
               <SelectItem value="ALL">Бүх хүйс</SelectItem>
               <SelectItem value="MALE">Эр</SelectItem>
               <SelectItem value="FEMALE">Эм</SelectItem>
@@ -183,17 +183,17 @@ export default function AnimalListPage() {
         </div>
 
         <div className="flex items-center justify-between">
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-slate-500 dark:text-gray-400">
             {loading ? "Ачаалж байна..." : `${data?.total ?? 0} мал олдлоо`}
           </p>
-          <div className="flex items-center gap-1 rounded-xl bg-[#161c2c] p-1">
+          <div className="flex items-center gap-1 rounded-xl bg-white dark:bg-[#161c2c] p-1">
             <button
               type="button"
               onClick={() => setView("list")}
               aria-label="Жагсаалт харагдац"
               className={cn(
                 "flex size-7 items-center justify-center rounded-lg",
-                view === "list" ? "bg-[#f2a93c] text-[#1a1206]" : "text-gray-400"
+                view === "list" ? "bg-[#f2a93c] text-[#1a1206]" : "text-slate-500 dark:text-gray-400"
               )}
             >
               <List className="size-4" />
@@ -204,7 +204,7 @@ export default function AnimalListPage() {
               aria-label="Grid харагдац"
               className={cn(
                 "flex size-7 items-center justify-center rounded-lg",
-                view === "grid" ? "bg-[#f2a93c] text-[#1a1206]" : "text-gray-400"
+                view === "grid" ? "bg-[#f2a93c] text-[#1a1206]" : "text-slate-500 dark:text-gray-400"
               )}
             >
               <LayoutGrid className="size-4" />
@@ -214,7 +214,7 @@ export default function AnimalListPage() {
       </div>
 
       {error ? (
-        <p className="mt-8 text-center text-sm text-red-400">{error}</p>
+        <p className="mt-8 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : view === "list" ? (
         <div className="mt-3 flex flex-col gap-2">
           {(data?.items ?? []).map((animal) => (
@@ -230,7 +230,7 @@ export default function AnimalListPage() {
       )}
 
       {!loading && !error && data?.items.length === 0 ? (
-        <p className="mt-8 text-center text-sm text-gray-500">
+        <p className="mt-8 text-center text-sm text-slate-500 dark:text-gray-400">
           Тохирох мал олдсонгүй.
         </p>
       ) : null}
@@ -241,18 +241,18 @@ export default function AnimalListPage() {
             type="button"
             disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="text-sm text-gray-400 disabled:opacity-30"
+            className="text-sm text-slate-500 dark:text-gray-400 disabled:opacity-30"
           >
             ← Өмнөх
           </button>
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-slate-500 dark:text-gray-400">
             {data.page} / {data.totalPages}
           </span>
           <button
             type="button"
             disabled={page >= data.totalPages}
             onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))}
-            className="text-sm text-gray-400 disabled:opacity-30"
+            className="text-sm text-slate-500 dark:text-gray-400 disabled:opacity-30"
           >
             Дараах →
           </button>
@@ -278,9 +278,9 @@ function AnimalListRow({ animal }: { animal: Livestock }) {
 
   return (
     <Link href={`/animals/${animal.id}`}>
-      <Card className="flex-row items-center gap-3 bg-[#141a2c] p-3 ring-1 ring-white/5">
-        <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-white/5">
-          <SpeciesIcon species={animal.species} className="size-5 text-[#f2a93c]" />
+      <Card className="flex-row items-center gap-3 bg-white dark:bg-[#141a2c] p-3 ring-1 ring-slate-200/80 dark:ring-white/5">
+        <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-slate-100 dark:bg-white/5">
+          <SpeciesIcon species={animal.species} className="size-5 text-[#a85b0a] dark:text-[#f2a93c]" />
         </span>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex items-center gap-1.5">
@@ -293,7 +293,7 @@ function AnimalListRow({ animal }: { animal: Livestock }) {
               </Badge>
             ) : null}
           </div>
-          <p className="truncate text-xs text-gray-500">
+          <p className="truncate text-xs text-slate-500 dark:text-gray-400">
             {SPECIES_LABEL[animal.species]} · {GENDER_LABEL[animal.gender]}
             {age !== null ? ` · ${age} нас` : ""}
           </p>
@@ -311,10 +311,10 @@ function AnimalGridCard({ animal }: { animal: Livestock }) {
 
   return (
     <Link href={`/animals/${animal.id}`}>
-      <Card className="gap-2 bg-[#141a2c] p-3 ring-1 ring-white/5">
+      <Card className="gap-2 bg-white dark:bg-[#141a2c] p-3 ring-1 ring-slate-200/80 dark:ring-white/5">
         <div className="flex items-center justify-between">
-          <span className="flex size-10 items-center justify-center rounded-xl bg-white/5">
-            <SpeciesIcon species={animal.species} className="size-5 text-[#f2a93c]" />
+          <span className="flex size-10 items-center justify-center rounded-xl bg-slate-100 dark:bg-white/5">
+            <SpeciesIcon species={animal.species} className="size-5 text-[#a85b0a] dark:text-[#f2a93c]" />
           </span>
           <Badge className={cn("px-1.5", STATUS_TONE[animal.status])}>
             {STATUS_LABEL[animal.status]}
@@ -324,10 +324,10 @@ function AnimalGridCard({ animal }: { animal: Livestock }) {
           <p className="truncate text-sm font-semibold">
             {animal.name || animal.earNumber}
           </p>
-          <p className="truncate text-xs text-gray-500">
+          <p className="truncate text-xs text-slate-500 dark:text-gray-400">
             {animal.rfidTag?.epc ?? animal.earNumber}
           </p>
-          <p className="truncate text-xs text-gray-500">
+          <p className="truncate text-xs text-slate-500 dark:text-gray-400">
             {GENDER_LABEL[animal.gender]}
             {age !== null ? ` · ${age} нас` : ""}
           </p>

@@ -7,7 +7,7 @@ export function BackButton({ href }: { href: string }) {
     <Button
       variant="ghost"
       size="icon-lg"
-      className="rounded-full text-gray-300 hover:bg-white/5 hover:text-gray-300"
+      className="rounded-full text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-gray-300 dark:hover:bg-white/5 dark:hover:text-gray-300"
       render={<Link href={href} aria-label="Буцах" />}
     >
       <ArrowLeft />

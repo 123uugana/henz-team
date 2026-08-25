@@ -8,6 +8,7 @@ import {
   dealerRegistrations,
   devicePushTokens,
   livestock,
+  livestockRemovals,
   otpCodes,
   refreshSessions,
   rfidReaders,
@@ -33,12 +34,15 @@ type AuthUser = {
   id: string;
   phoneNumber: string;
   name: string;
+  imageUrl: string | null;
   role: 'FARMER' | 'ADMIN' | 'DEALER';
+  sessionId: string | null;
 };
 
 type TokenPayload = {
   sub: string;
-  exp: number;
+  sid?: string;
+  exp?: number;
 };
 
 const OTP_RESEND_COOLDOWN_MS = 60_000;
@@ -66,9 +70,19 @@ const refreshSchema = z.object({
   refreshToken: z.string().min(1),
 });
 
-const updateProfileSchema = z.object({
-  name: z.string().trim().min(2, 'Нэр хамгийн багадаа 2 тэмдэгт байна.'),
-});
+const updateProfileSchema = z
+  .object({
+    name: z.string().trim().min(2, 'Нэр хамгийн багадаа 2 тэмдэгт байна.').optional(),
+    imageUrl: z
+      .string()
+      .refine(
+        (value) => value.startsWith('data:image/') || /^https?:\/\//i.test(value),
+        'Зургийн холбоос буруу байна.',
+      )
+      .nullable()
+      .optional(),
+  })
+  .refine((input) => input.name !== undefined || input.imageUrl !== undefined);
 
 const updateLivestockStatusSchema = z.object({
   status: z.enum(['ACTIVE', 'MISSING', 'INACTIVE']),
@@ -166,10 +180,6 @@ function now() {
 
 function minutesFromNow(minutes: number) {
   return new Date(Date.now() + minutes * 60_000).toISOString();
-}
-
-function daysFromNow(days: number) {
-  return new Date(Date.now() + days * 24 * 60 * 60_000).toISOString();
 }
 
 function createOtpCode() {
@@ -346,12 +356,12 @@ async function sendOtpSms(env: Env, phoneNumber: string, code: string) {
   console.info(`OTP code for +976${phoneNumber}: ${code}`);
 }
 
-async function createAccessToken(env: Env, userId: string) {
+async function createAccessToken(env: Env, userId: string, sessionId: string) {
   const header = base64UrlFromString(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const payload = base64UrlFromString(
     JSON.stringify({
       sub: userId,
-      exp: Math.floor(Date.now() / 1000) + 15 * 60,
+      sid: sessionId,
     }),
   );
   const signature = await hmac(accessTokenSecret(env), `${header}.${payload}`);
@@ -373,7 +383,9 @@ async function verifyAccessToken(env: Env, token: string): Promise<TokenPayload>
 
   const tokenPayload = JSON.parse(decodeBase64Url(payload)) as TokenPayload;
 
-  if (tokenPayload.exp < Math.floor(Date.now() / 1000)) {
+  // Keep accepting older tokens until their original expiry so existing
+  // clients can use the refresh flow once and receive a non-expiring session.
+  if (tokenPayload.exp !== undefined && tokenPayload.exp < Math.floor(Date.now() / 1000)) {
     throw new ApiFailure(401, 'Нэвтрэх эрхийн хугацаа дууссан байна.', 'TOKEN_EXPIRED');
   }
 
@@ -381,19 +393,17 @@ async function verifyAccessToken(env: Env, token: string): Promise<TokenPayload>
 }
 
 async function createSession(db: ReturnType<typeof drizzle>, env: Env, userId: string) {
+  const sessionId = createId('session');
   const refreshToken = `${crypto.randomUUID()}.${crypto.randomUUID()}`;
-  const accessToken = await createAccessToken(env, userId);
+  const accessToken = await createAccessToken(env, userId, sessionId);
   const refreshTokenHash = await sha256(refreshToken);
   const createdAt = now();
 
   await db.insert(refreshSessions).values({
-    id: createId('session'),
+    id: sessionId,
     userId,
     refreshTokenHash,
-    // Farmers may not open the app for weeks at a stretch; once logged in
-    // with a phone number, keep the session alive rather than force a
-    // re-login from inactivity.
-    expiresAt: daysFromNow(3650),
+    expiresAt: '9999-12-31T23:59:59.999Z',
     createdAt,
   });
 
@@ -414,13 +424,32 @@ async function getAuthUser(request: Request, db: ReturnType<typeof drizzle>, env
   }
 
   const payload = await verifyAccessToken(env, token);
+
+  if (payload.sid) {
+    const activeSession = await db
+      .select({ id: refreshSessions.id })
+      .from(refreshSessions)
+      .where(
+        and(
+          eq(refreshSessions.id, payload.sid),
+          eq(refreshSessions.userId, payload.sub),
+          isNull(refreshSessions.revokedAt),
+        ),
+      )
+      .get();
+
+    if (!activeSession) {
+      throw new ApiFailure(401, 'Нэвтрэх эрх хүчингүй болсон байна.', 'SESSION_REVOKED');
+    }
+  }
+
   const user = await db.select().from(users).where(eq(users.id, payload.sub)).get();
 
   if (!user) {
     throw new ApiFailure(401, 'Нэвтрэх эрх буруу байна.', 'INVALID_TOKEN');
   }
 
-  return user as AuthUser;
+  return { ...user, sessionId: payload.sid ?? null } as AuthUser;
 }
 
 function cleanOptionalText(value?: string | null) {
@@ -567,7 +596,6 @@ async function ensureUniqueEarNumber(
 
 async function ensureUniqueEpc(
   db: ReturnType<typeof drizzle>,
-  userId: string,
   epc: string,
   excludeLivestockId?: string,
 ) {
@@ -576,8 +604,7 @@ async function ensureUniqueEpc(
     .from(rfidTags)
     .where(
       and(
-        eq(rfidTags.userId, userId),
-        eq(rfidTags.epc, epc),
+        sql`lower(${rfidTags.epc}) = ${epc.toLowerCase()}`,
         ...(excludeLivestockId ? [ne(rfidTags.livestockId, excludeLivestockId)] : []),
       ),
     )
@@ -609,6 +636,20 @@ async function upsertRfidTag(
     createdAt: timestamp,
     updatedAt: timestamp,
   });
+}
+
+async function releaseRegistryTag(
+  db: ReturnType<typeof drizzle>,
+  userId: string,
+  epc: string,
+) {
+  const registryTag = await findRegistryTag(db, epc);
+  if (registryTag?.claimedByUserId !== userId) return;
+
+  await db
+    .update(rfidTagRegistry)
+    .set({ status: 'AVAILABLE', claimedByUserId: null, claimedAt: null, updatedAt: now() })
+    .where(eq(rfidTagRegistry.epc, registryTag.epc));
 }
 
 async function sendAlertPush(
@@ -799,6 +840,7 @@ async function handleVerifyOtp(request: Request, db: ReturnType<typeof drizzle>,
       id: createId('user'),
       phoneNumber: input.phoneNumber,
       name: '',
+      imageUrl: null,
       role: 'FARMER' as const,
       aimag: null,
       sum: null,
@@ -818,6 +860,7 @@ async function handleVerifyOtp(request: Request, db: ReturnType<typeof drizzle>,
       id: user.id,
       phoneNumber: user.phoneNumber,
       name: user.name,
+      imageUrl: user.imageUrl,
       role: user.role,
     },
     requiresProfileSetup: user.name.trim().length === 0,
@@ -880,12 +923,33 @@ async function handleRefresh(request: Request, db: ReturnType<typeof drizzle>, e
   return apiResponse(await createSession(db, env, user.id));
 }
 
+async function handleLogout(db: ReturnType<typeof drizzle>, user: AuthUser) {
+  const timestamp = now();
+
+  if (user.sessionId) {
+    await db
+      .update(refreshSessions)
+      .set({ revokedAt: timestamp })
+      .where(and(eq(refreshSessions.id, user.sessionId), eq(refreshSessions.userId, user.id)));
+  } else {
+    // Older access tokens did not carry a session id, so revoke every refresh
+    // session belonging to that user when they explicitly sign out.
+    await db
+      .update(refreshSessions)
+      .set({ revokedAt: timestamp })
+      .where(eq(refreshSessions.userId, user.id));
+  }
+
+  return apiResponse({ loggedOut: true });
+}
+
 async function handleGetMe(request: Request, db: ReturnType<typeof drizzle>, env: Env) {
   const user = await getAuthUser(request, db, env);
   return apiResponse({
     id: user.id,
     phoneNumber: user.phoneNumber,
     name: user.name,
+    imageUrl: user.imageUrl,
     role: user.role,
   });
 }
@@ -896,13 +960,18 @@ async function handleUpdateMe(request: Request, db: ReturnType<typeof drizzle>, 
 
   await db
     .update(users)
-    .set({ name: input.name.trim(), updatedAt: now() })
+    .set({
+      ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+      ...(input.imageUrl !== undefined ? { imageUrl: input.imageUrl } : {}),
+      updatedAt: now(),
+    })
     .where(eq(users.id, user.id));
 
   return apiResponse({
     id: user.id,
     phoneNumber: user.phoneNumber,
-    name: input.name.trim(),
+    name: input.name?.trim() ?? user.name,
+    imageUrl: input.imageUrl === undefined ? user.imageUrl : input.imageUrl,
     role: user.role,
   });
 }
@@ -989,10 +1058,12 @@ async function handleCreateLivestock(
   const livestockId = createId('livestock');
   const earNumber = input.earNumber.trim();
   const epc = cleanOptionalText(input.rfidEpc);
+  const normalizedEpc = epc ? normalizeEpc(epc) : null;
 
   await ensureUniqueEarNumber(db, userId, earNumber);
-  if (epc) {
-    await ensureUniqueEpc(db, userId, epc);
+  if (normalizedEpc) {
+    await ensureTagClaimable(db, userId, normalizedEpc);
+    await ensureUniqueEpc(db, normalizedEpc);
   }
 
   await db.insert(livestock).values({
@@ -1010,7 +1081,10 @@ async function handleCreateLivestock(
     createdAt: timestamp,
     updatedAt: timestamp,
   });
-  await upsertRfidTag(db, userId, livestockId, epc);
+  await upsertRfidTag(db, userId, livestockId, normalizedEpc);
+  if (normalizedEpc) {
+    await claimTagForUser(db, userId, normalizedEpc);
+  }
 
   const created = await db.select().from(livestock).where(eq(livestock.id, livestockId)).get();
   return apiResponse(await mapLivestock(db, created!));
@@ -1051,12 +1125,20 @@ async function handleUpdateLivestock(
     throw new ApiFailure(404, 'Малын мэдээлэл олдсонгүй.', 'NOT_FOUND');
   }
 
+  const existingTag = await db
+    .select()
+    .from(rfidTags)
+    .where(eq(rfidTags.livestockId, livestockId))
+    .get();
+
   const earNumber = input.earNumber.trim();
   const epc = cleanOptionalText(input.rfidEpc);
+  const normalizedEpc = epc ? normalizeEpc(epc) : null;
 
   await ensureUniqueEarNumber(db, userId, earNumber, livestockId);
-  if (epc) {
-    await ensureUniqueEpc(db, userId, epc, livestockId);
+  if (normalizedEpc) {
+    await ensureTagClaimable(db, userId, normalizedEpc);
+    await ensureUniqueEpc(db, normalizedEpc, livestockId);
   }
 
   await db
@@ -1073,7 +1155,13 @@ async function handleUpdateLivestock(
       updatedAt: now(),
     })
     .where(eq(livestock.id, livestockId));
-  await upsertRfidTag(db, userId, livestockId, epc);
+  await upsertRfidTag(db, userId, livestockId, normalizedEpc);
+  if (existingTag && existingTag.epc !== normalizedEpc) {
+    await releaseRegistryTag(db, userId, existingTag.epc);
+  }
+  if (normalizedEpc) {
+    await claimTagForUser(db, userId, normalizedEpc);
+  }
 
   const updated = await db.select().from(livestock).where(eq(livestock.id, livestockId)).get();
   return apiResponse(await mapLivestock(db, updated!));
@@ -1172,10 +1260,26 @@ async function handleDeleteLivestock(
     throw new ApiFailure(404, 'Малын мэдээлэл олдсонгүй.', 'NOT_FOUND');
   }
 
+  const tag = await db
+    .select()
+    .from(rfidTags)
+    .where(eq(rfidTags.livestockId, livestockId))
+    .get();
+
+  await db.insert(livestockRemovals).values({
+    id: createId('removal'),
+    userId,
+    livestockId,
+    livestockCreatedAt: existing.createdAt,
+    removedAt: now(),
+  });
+
   await db.delete(rfidTags).where(eq(rfidTags.livestockId, livestockId));
   await db.update(rfidScans).set({ livestockId: null }).where(eq(rfidScans.livestockId, livestockId));
   await db.update(alerts).set({ livestockId: null }).where(eq(alerts.livestockId, livestockId));
   await db.delete(livestock).where(eq(livestock.id, livestockId));
+
+  if (tag) await releaseRegistryTag(db, userId, tag.epc);
 
   return apiResponse({ id: livestockId, deleted: true });
 }
@@ -1185,9 +1289,27 @@ async function handleLivestockScans(
   userId: string,
   livestockId: string,
 ) {
+  const animal = await db
+    .select({ id: livestock.id })
+    .from(livestock)
+    .where(and(eq(livestock.id, livestockId), eq(livestock.userId, userId)))
+    .get();
+
+  if (!animal) {
+    throw new ApiFailure(404, 'Малын мэдээлэл олдсонгүй.', 'NOT_FOUND');
+  }
+
   const rows = await db
-    .select()
+    .select({
+      id: rfidScans.id,
+      epc: rfidScans.epc,
+      direction: rfidScans.direction,
+      scannedAt: rfidScans.scannedAt,
+      readerId: rfidReaders.id,
+      readerName: rfidReaders.name,
+    })
     .from(rfidScans)
+    .leftJoin(rfidReaders, eq(rfidReaders.id, rfidScans.readerId))
     .where(and(eq(rfidScans.userId, userId), eq(rfidScans.livestockId, livestockId)))
     .orderBy(desc(rfidScans.scannedAt))
     .all();
@@ -1198,10 +1320,10 @@ async function handleLivestockScans(
       epc: scan.epc,
       direction: scan.direction,
       scannedAt: scan.scannedAt,
-      reader: {
-        id: scan.readerId ?? 'unknown',
-        name: 'RFID уншигч',
-      },
+      reader:
+        scan.readerId && scan.readerName
+          ? { id: scan.readerId, name: scan.readerName }
+          : null,
     })),
   );
 }
@@ -1581,6 +1703,48 @@ async function handleMissingLivestock(db: ReturnType<typeof drizzle>, userId: st
   return apiResponse(data);
 }
 
+async function handleSearchSignal(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+  ctx: ExecutionContext,
+  user: AuthUser,
+) {
+  const missingRows = await db
+    .select({ id: livestock.id, earNumber: livestock.earNumber })
+    .from(livestock)
+    .where(and(eq(livestock.userId, user.id), eq(livestock.status, 'MISSING')))
+    .all();
+
+  if (missingRows.length === 0) {
+    throw new ApiFailure(409, 'Дутуу гэж тэмдэглэсэн мал алга байна.', 'NO_MISSING_LIVESTOCK');
+  }
+
+  await createAlert(db, env, ctx, user.id, {
+    type: 'SYSTEM',
+    title: 'Хайлтын дохио илгээгдлээ',
+    message: `${missingRows.length} малын хайлтын хүсэлт бүртгэгдлээ.`,
+  });
+
+  const owner = await db
+    .select({ dealerId: users.dealerId })
+    .from(users)
+    .where(eq(users.id, user.id))
+    .get();
+
+  if (owner?.dealerId) {
+    await createAlert(db, env, ctx, owner.dealerId, {
+      type: 'MISSING',
+      title: 'Мал хайх хүсэлт',
+      message: `${user.name || user.phoneNumber} ${missingRows.length} дутуу малын хайлтын дохио илгээлээ.`,
+    });
+  }
+
+  return apiResponse({
+    missingCount: missingRows.length,
+    dealerNotified: Boolean(owner?.dealerId),
+  });
+}
+
 async function handleHistory(request: Request, db: ReturnType<typeof drizzle>, userId: string) {
   const url = new URL(request.url);
   const rangeParam = url.searchParams.get('range') ?? '7d';
@@ -1589,11 +1753,21 @@ async function handleHistory(request: Request, db: ReturnType<typeof drizzle>, u
     : '7d';
   const days = HISTORY_RANGE_DAYS[range];
 
-  const rows = await db
-    .select({ createdAt: livestock.createdAt })
-    .from(livestock)
-    .where(eq(livestock.userId, userId))
-    .all();
+  const [rows, removals] = await Promise.all([
+    db
+      .select({ createdAt: livestock.createdAt })
+      .from(livestock)
+      .where(eq(livestock.userId, userId))
+      .all(),
+    db
+      .select({
+        createdAt: livestockRemovals.livestockCreatedAt,
+        removedAt: livestockRemovals.removedAt,
+      })
+      .from(livestockRemovals)
+      .where(eq(livestockRemovals.userId, userId))
+      .all(),
+  ]);
 
   const nowMs = Date.now();
   const startIso = new Date(nowMs - days * 24 * 60 * 60_000).toISOString();
@@ -1605,28 +1779,25 @@ async function handleHistory(request: Request, db: ReturnType<typeof drizzle>, u
   for (let i = pointCount; i >= 0; i -= 1) {
     const bucketDate = new Date(nowMs - i * stepDays * 24 * 60 * 60_000);
     const cutoff = bucketDate.toISOString();
-    const total = rows.filter((row) => row.createdAt <= cutoff).length;
+    const total =
+      rows.filter((row) => row.createdAt <= cutoff).length +
+      removals.filter((row) => row.createdAt <= cutoff && row.removedAt > cutoff).length;
     points.push({
       label: bucketDate.toLocaleDateString('mn-MN', { month: 'short', day: 'numeric' }),
       total,
     });
   }
 
-  const added = rows.filter((row) => row.createdAt >= startIso).length;
-  const removedRow = await db
-    .select({ value: count() })
-    .from(alerts)
-    .where(
-      and(
-        eq(alerts.userId, userId),
-        eq(alerts.type, 'MISSING'),
-        gte(alerts.createdAt, startIso),
-      ),
-    )
-    .get();
-  const removed = removedRow?.value ?? 0;
-  const todayDelta =
-    points.length >= 2 ? points[points.length - 1].total - points[points.length - 2].total : 0;
+  const added =
+    rows.filter((row) => row.createdAt >= startIso).length +
+    removals.filter((row) => row.createdAt >= startIso).length;
+  const removed = removals.filter((row) => row.removedAt >= startIso).length;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const addedToday =
+    rows.filter((row) => row.createdAt.startsWith(todayIso)).length +
+    removals.filter((row) => row.createdAt.startsWith(todayIso)).length;
+  const removedToday = removals.filter((row) => row.removedAt.startsWith(todayIso)).length;
+  const todayDelta = addedToday - removedToday;
 
   return apiResponse({ points, added, removed, todayDelta });
 }
@@ -1928,16 +2099,21 @@ function tagRegistryResponse(row: typeof rfidTagRegistry.$inferSelect) {
   };
 }
 
-async function handleClaimTag(request: Request, db: ReturnType<typeof drizzle>, userId: string) {
-  const input = await parseJson(request, claimTagSchema);
-  const epc = input.epc.trim();
-  const timestamp = now();
-
-  const existing = await db
+async function findRegistryTag(db: ReturnType<typeof drizzle>, epc: string) {
+  return db
     .select()
     .from(rfidTagRegistry)
-    .where(eq(rfidTagRegistry.epc, epc))
+    .where(sql`lower(${rfidTagRegistry.epc}) = ${epc.toLowerCase()}`)
     .get();
+}
+
+async function ensureTagClaimable(
+  db: ReturnType<typeof drizzle>,
+  userId: string,
+  rawEpc: string,
+) {
+  const epc = normalizeEpc(rawEpc);
+  const existing = await findRegistryTag(db, epc);
 
   if (existing && existing.status === 'DAMAGED') {
     throw new ApiFailure(409, 'Энэ шошго гэмтэлтэй тул ашиглах боломжгүй.', 'TAG_DAMAGED');
@@ -1951,11 +2127,22 @@ async function handleClaimTag(request: Request, db: ReturnType<typeof drizzle>, 
     throw new ApiFailure(409, 'Энэ шошго өөр хэрэглэгчид бүртгэгдсэн байна.', 'TAG_ALREADY_CLAIMED');
   }
 
+  return { epc, existing };
+}
+
+async function claimTagForUser(
+  db: ReturnType<typeof drizzle>,
+  userId: string,
+  rawEpc: string,
+) {
+  const { epc, existing } = await ensureTagClaimable(db, userId, rawEpc);
+  const timestamp = now();
+
   if (existing) {
     await db
       .update(rfidTagRegistry)
       .set({ status: 'LOCKED', claimedByUserId: userId, claimedAt: timestamp, updatedAt: timestamp })
-      .where(eq(rfidTagRegistry.epc, epc));
+      .where(eq(rfidTagRegistry.epc, existing.epc));
   } else {
     await db.insert(rfidTagRegistry).values({
       epc,
@@ -1967,12 +2154,19 @@ async function handleClaimTag(request: Request, db: ReturnType<typeof drizzle>, 
     });
   }
 
-  const tag = await db.select().from(rfidTagRegistry).where(eq(rfidTagRegistry.epc, epc)).get();
-  return apiResponse(tagRegistryResponse(tag!));
+  const tag = await findRegistryTag(db, epc);
+  return tag!;
 }
 
-async function handleGetTag(db: ReturnType<typeof drizzle>, epc: string) {
-  const tag = await db.select().from(rfidTagRegistry).where(eq(rfidTagRegistry.epc, epc)).get();
+async function handleClaimTag(request: Request, db: ReturnType<typeof drizzle>, userId: string) {
+  const input = await parseJson(request, claimTagSchema);
+  const tag = await claimTagForUser(db, userId, input.epc);
+  return apiResponse(tagRegistryResponse(tag));
+}
+
+async function handleGetTag(db: ReturnType<typeof drizzle>, rawEpc: string) {
+  const epc = normalizeEpc(rawEpc);
+  const tag = await findRegistryTag(db, epc);
 
   if (!tag) {
     return apiResponse({ epc, status: 'AVAILABLE' as const });
@@ -1986,8 +2180,9 @@ async function handleListTags(db: ReturnType<typeof drizzle>) {
   return apiResponse(rows.map(tagRegistryResponse));
 }
 
-async function handleUnlockTag(db: ReturnType<typeof drizzle>, epc: string) {
-  const existing = await db.select().from(rfidTagRegistry).where(eq(rfidTagRegistry.epc, epc)).get();
+async function handleUnlockTag(db: ReturnType<typeof drizzle>, rawEpc: string) {
+  const epc = normalizeEpc(rawEpc);
+  const existing = await findRegistryTag(db, epc);
 
   if (!existing) {
     throw new ApiFailure(404, 'Шошго олдсонгүй.', 'NOT_FOUND');
@@ -1996,9 +2191,9 @@ async function handleUnlockTag(db: ReturnType<typeof drizzle>, epc: string) {
   await db
     .update(rfidTagRegistry)
     .set({ status: 'AVAILABLE', claimedByUserId: null, claimedAt: null, updatedAt: now() })
-    .where(eq(rfidTagRegistry.epc, epc));
+    .where(eq(rfidTagRegistry.epc, existing.epc));
 
-  const updated = await db.select().from(rfidTagRegistry).where(eq(rfidTagRegistry.epc, epc)).get();
+  const updated = await findRegistryTag(db, epc);
   return apiResponse(tagRegistryResponse(updated!));
 }
 
@@ -2020,6 +2215,17 @@ async function handleCreateDealerRegistration(
   userId: string,
 ) {
   const input = await parseJson(request, dealerRegistrationInputSchema);
+  const existing = await db
+    .select()
+    .from(dealerRegistrations)
+    .where(eq(dealerRegistrations.requestedByUserId, userId))
+    .orderBy(desc(dealerRegistrations.createdAt))
+    .get();
+
+  if (existing?.status === 'PENDING' || existing?.status === 'APPROVED') {
+    throw new ApiFailure(409, 'Идэвхтэй хүсэлт өмнө нь бүртгэгдсэн байна.', 'REGISTRATION_EXISTS');
+  }
+
   const id = createId('dealer');
 
   await db.insert(dealerRegistrations).values({
@@ -2038,6 +2244,17 @@ async function handleCreateDealerRegistration(
     .where(eq(dealerRegistrations.id, id))
     .get();
   return apiResponse(dealerRegistrationResponse(created!));
+}
+
+async function handleGetMyDealerRegistration(db: ReturnType<typeof drizzle>, userId: string) {
+  const registration = await db
+    .select()
+    .from(dealerRegistrations)
+    .where(eq(dealerRegistrations.requestedByUserId, userId))
+    .orderBy(desc(dealerRegistrations.createdAt))
+    .get();
+
+  return apiResponse(registration ? dealerRegistrationResponse(registration) : null);
 }
 
 async function handleListDealerRegistrations(db: ReturnType<typeof drizzle>) {
@@ -2065,10 +2282,21 @@ async function handleDecideDealerRegistration(
     throw new ApiFailure(404, 'Хүсэлт олдсонгүй.', 'NOT_FOUND');
   }
 
+  if (existing.status !== 'PENDING') {
+    throw new ApiFailure(409, 'Энэ хүсэлтийг өмнө шийдвэрлэсэн байна.', 'REGISTRATION_ALREADY_DECIDED');
+  }
+
   await db
     .update(dealerRegistrations)
     .set({ status: input.status, decidedAt: now() })
     .where(eq(dealerRegistrations.id, registrationId));
+
+  if (input.status === 'APPROVED') {
+    await db
+      .update(users)
+      .set({ role: 'DEALER', updatedAt: now() })
+      .where(eq(users.id, existing.requestedByUserId));
+  }
 
   const updated = await db
     .select()
@@ -2264,6 +2492,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
     return handleUpdateMe(request, db, env);
   }
 
+  if (request.method === 'POST' && path === '/api/auth/logout') {
+    return handleLogout(db, user);
+  }
+
   if (request.method === 'GET' && path === '/api/dashboard') {
     return handleDashboard(db, user.id);
   }
@@ -2274,6 +2506,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
 
   if (request.method === 'GET' && path === '/api/reports/missing') {
     return handleMissingLivestock(db, user.id);
+  }
+
+  if (request.method === 'POST' && path === '/api/search-signal') {
+    return handleSearchSignal(db, env, ctx, user);
   }
 
   if (request.method === 'GET' && path === '/api/reports/history') {
@@ -2310,6 +2546,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
 
   if (request.method === 'POST' && path === '/api/dealer-registrations') {
     return handleCreateDealerRegistration(request, db, user.id);
+  }
+
+  if (request.method === 'GET' && path === '/api/dealer-registrations/me') {
+    return handleGetMyDealerRegistration(db, user.id);
   }
 
   if (request.method === 'GET' && path === '/api/dealer/farmers') {
