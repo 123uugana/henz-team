@@ -4,7 +4,7 @@ import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import worker from '../src/index';
-import { users } from '../src/db/schema';
+import { rfidScans, users } from '../src/db/schema';
 
 type WorkerEnv = Parameters<typeof worker.fetch>[1];
 const testEnv = env as unknown as WorkerEnv;
@@ -634,6 +634,119 @@ describe('rfid device integration', () => {
     expect(dashboard.body.data.recentScans[0]).toMatchObject({
       epc: 'E280-SUMMARY-UNKNOWN',
       livestock: null,
+    });
+  });
+
+  it('accepts raw HH100 scan payloads and stores parsed metadata', async () => {
+    const tokens = await registerAndLogin('99397766');
+    const auth = tokens.accessToken;
+    const db = drizzle(testEnv.DB);
+    const readerId = 'hh100-raw-01';
+    const epc = 'E280-RAW-HH100';
+
+    const reader = await api(
+      '/api/devices/readers',
+      json('POST', { id: readerId, name: 'HH100 Raw Reader' }, auth),
+    );
+    expect(reader.status).toBe(200);
+
+    const tagged = await api(
+      '/api/livestock',
+      json('POST', { earNumber: 'RAW-100', species: 'SHEEP', gender: 'FEMALE', rfidEpc: epc }, auth),
+    );
+    expect(tagged.status).toBe(200);
+
+    const payload = {
+      'Reader ID': readerId,
+      tags: [
+        {
+          EPC: epc.toLowerCase(),
+          RSSI: -61,
+          'Antenna ID': '1',
+          Count: 2,
+          timestamp: '2026-08-26T00:00:00.000Z',
+        },
+      ],
+    };
+
+    const first = await api('/api/rfid/scan?key=test-rfid-device-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    expect(first.status).toBe(200);
+    expect(first.body.data).toMatchObject({
+      accepted: 1,
+      inserted: 1,
+      duplicates: 0,
+      known: 1,
+    });
+
+    const duplicate = await api('/api/rfid/scan?key=test-rfid-device-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, tags: [{ ...payload.tags[0], Count: 3, RSSI: -58 }] }),
+    });
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body.message).toBe('RFID scan received');
+    expect(duplicate.body.data).toMatchObject({
+      accepted: 1,
+      inserted: 0,
+      duplicates: 1,
+    });
+    expect(duplicate.body.data.scans[0]).toMatchObject({
+      epc,
+      matched: true,
+      duplicate: true,
+      livestock: {
+        earNumber: 'RAW-100',
+      },
+    });
+
+    const scan = await db.select().from(rfidScans).where(eq(rfidScans.epc, epc)).get();
+    expect(scan).toMatchObject({
+      readerId,
+      rssi: -58,
+      antennaId: '1',
+      scanCount: 5,
+      source: 'DEVICE',
+    });
+    expect(scan!.rawPayload).toContain('e280-raw-hh100');
+  });
+
+  it('protects the raw HH100 endpoint with a device key', async () => {
+    const missing = await api('/api/rfid/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"EPC":"E280-KEY-TEST","ReaderID":"hh100-raw-01"}',
+    });
+    expect(missing.status).toBe(401);
+    expect(missing.body).toMatchObject({
+      success: false,
+      message: 'Invalid RFID device key',
+      code: 'INVALID_DEVICE_KEY',
+    });
+
+    const wrong = await api('/api/rfid/scan?key=wrong-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"EPC":"E280-KEY-TEST","ReaderID":"hh100-raw-01"}',
+    });
+    expect(wrong.status).toBe(401);
+    expect(wrong.body.code).toBe('INVALID_DEVICE_KEY');
+  });
+
+  it('rejects raw HH100 payloads without an EPC', async () => {
+    const res = await api('/api/rfid/scan?key=test-rfid-device-key&readerId=hh100-raw-01', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"RSSI":-58,"AntennaID":1}',
+    });
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({
+      success: false,
+      message: 'EPC is required',
+      code: 'INVALID_RFID_DATA',
     });
   });
 

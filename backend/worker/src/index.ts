@@ -28,6 +28,7 @@ type Env = {
   INFOBIP_BASE_URL?: string;
   INFOBIP_API_KEY?: string;
   INFOBIP_SENDER?: string;
+  RFID_DEVICE_KEY?: string;
 };
 
 type AuthUser = {
@@ -48,6 +49,8 @@ type TokenPayload = {
 const OTP_RESEND_COOLDOWN_MS = 60_000;
 const OTP_MAX_ATTEMPTS = 5;
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+const MAX_HH100_RAW_PAYLOAD_BYTES = 128 * 1024;
+const MAX_LOGGED_HH100_PAYLOAD_CHARS = 4096;
 const RECENT_SCANS_LIMIT = 50;
 const DUPLICATE_SCAN_WINDOW_MS = 30_000;
 
@@ -117,6 +120,10 @@ const scanInputSchema = z.object({
   direction: z.enum(['ENTER', 'EXIT', 'UNKNOWN']).optional(),
   readerId: z.string().trim().optional(),
   scannedAt: z.string().trim().optional(),
+  rssi: z.number().int().optional(),
+  antennaId: z.string().trim().optional(),
+  count: z.number().int().positive().optional(),
+  rawPayload: z.string().optional(),
 });
 
 const ingestScansSchema = z.object({
@@ -193,6 +200,13 @@ function createId(prefix: string) {
 
 function apiResponse(data: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify({ success: true, data }), {
+    ...init,
+    headers: jsonHeaders,
+  });
+}
+
+function apiMessageResponse(message: string, data: unknown, init?: ResponseInit) {
+  return new Response(JSON.stringify({ success: true, message, data }), {
     ...init,
     headers: jsonHeaders,
   });
@@ -280,6 +294,19 @@ async function sha256(value: string) {
     new TextEncoder().encode(value),
   );
   return base64UrlFromBytes(new Uint8Array(hash));
+}
+
+async function timingSafeEqual(value: string, expected: string) {
+  const valueHash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)));
+  const expectedHash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(expected)));
+  let diff = valueHash.length ^ expectedHash.length;
+  const maxLength = Math.max(valueHash.length, expectedHash.length);
+
+  for (let i = 0; i < maxLength; i += 1) {
+    diff |= (valueHash[i] ?? 0) ^ (expectedHash[i] ?? 0);
+  }
+
+  return diff === 0;
 }
 
 function accessTokenSecret(env: Env) {
@@ -477,6 +504,302 @@ function scanTimestamp(value: string | undefined, fallback: number) {
   }
 
   return timestamp.toISOString();
+}
+
+type RfidScanInput = z.infer<typeof scanInputSchema>;
+type RawRecord = Record<string, unknown>;
+
+function normalizePayloadKey(key: string) {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function recordValue(record: RawRecord, aliases: string[]) {
+  const normalizedAliases = new Set(aliases.map(normalizePayloadKey));
+
+  for (const [key, value] of Object.entries(record)) {
+    if (normalizedAliases.has(normalizePayloadKey(key))) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function stringValue(record: RawRecord, aliases: string[]) {
+  const value = recordValue(record, aliases);
+
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  const text = String(value).trim();
+  return text ? text : undefined;
+}
+
+function numberValue(record: RawRecord, aliases: string[]) {
+  const value = recordValue(record, aliases);
+
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : undefined;
+}
+
+function directionValue(record: RawRecord) {
+  const direction = stringValue(record, ['direction', 'dir', 'inout'])?.toUpperCase();
+
+  if (direction === 'ENTER' || direction === 'IN') {
+    return 'ENTER' as const;
+  }
+
+  if (direction === 'EXIT' || direction === 'OUT') {
+    return 'EXIT' as const;
+  }
+
+  if (direction === 'UNKNOWN') {
+    return 'UNKNOWN' as const;
+  }
+
+  return undefined;
+}
+
+function scanFromRecord(record: RawRecord, rawPayload: string, defaults?: Partial<RfidScanInput>): RfidScanInput | null {
+  const epc = stringValue(record, [
+    'epc',
+    'tag',
+    'tagId',
+    'tagEpc',
+    'epcId',
+    'epcData',
+    'tid',
+  ]);
+
+  if (!epc) {
+    return null;
+  }
+
+  const readerId = stringValue(record, [
+    'readerId',
+    'reader',
+    'deviceId',
+    'device',
+    'readerName',
+    'hostName',
+    'mac',
+  ]) ?? defaults?.readerId;
+  const scannedAt = stringValue(record, [
+    'scannedAt',
+    'timestamp',
+    'time',
+    'dateTime',
+    'readTime',
+    'eventTime',
+  ]) ?? defaults?.scannedAt;
+  const antennaId = stringValue(record, [
+    'antennaId',
+    'antenna',
+    'ant',
+    'antId',
+    'antennaPort',
+  ]) ?? defaults?.antennaId;
+  const rssi = numberValue(record, ['rssi', 'peakRssi', 'rssiDbm']) ?? defaults?.rssi;
+  const count = numberValue(record, ['count', 'readCount', 'seenCount', 'reads']) ?? defaults?.count;
+  const direction = directionValue(record) ?? defaults?.direction;
+  const scan: RfidScanInput = { epc, rawPayload };
+
+  if (direction) scan.direction = direction;
+  if (readerId) scan.readerId = readerId;
+  if (scannedAt) scan.scannedAt = scannedAt;
+  if (rssi !== undefined) scan.rssi = rssi;
+  if (antennaId) scan.antennaId = antennaId;
+  if (count !== undefined) scan.count = count;
+
+  return scan;
+}
+
+function extractRecordArray(record: RawRecord) {
+  for (const key of ['scans', 'tags', 'tagReads', 'readings', 'data', 'items', 'records']) {
+    const value = record[key];
+
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function parseJsonHh100Payload(value: unknown, rawPayload: string, defaults?: Partial<RfidScanInput>): RfidScanInput[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => parseJsonHh100Payload(item, rawPayload, defaults));
+  }
+
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+
+  const record = value as RawRecord;
+  const recordDefaults = {
+    ...defaults,
+    readerId: stringValue(record, [
+      'readerId',
+      'reader',
+      'deviceId',
+      'device',
+      'readerName',
+      'hostName',
+      'mac',
+    ]) ?? defaults?.readerId,
+    scannedAt: stringValue(record, ['scannedAt', 'timestamp', 'time', 'dateTime', 'readTime', 'eventTime']) ?? defaults?.scannedAt,
+  } satisfies Partial<RfidScanInput>;
+  const nestedRecords = extractRecordArray(record);
+
+  if (nestedRecords) {
+    return nestedRecords.flatMap((item) => parseJsonHh100Payload(item, rawPayload, recordDefaults));
+  }
+
+  const scan = scanFromRecord(record, rawPayload, recordDefaults);
+  return scan ? [scan] : [];
+}
+
+function parseKeyValueRecord(text: string) {
+  const record: RawRecord = {};
+  const matches = text.matchAll(/([A-Za-z][A-Za-z0-9 _-]{0,32})\s*[:=]\s*([^,;\n\r\t]+)/g);
+
+  for (const match of matches) {
+    record[match[1].trim()] = match[2].trim();
+  }
+
+  return Object.keys(record).length > 0 ? record : null;
+}
+
+function parseTextHh100Payload(rawPayload: string): RfidScanInput[] {
+  const records = rawPayload
+    .split(/\r?\n/)
+    .map((line) => parseKeyValueRecord(line))
+    .filter((record): record is RawRecord => !!record);
+  const allRecords = records.length > 0 ? records : [parseKeyValueRecord(rawPayload)].filter((record): record is RawRecord => !!record);
+  const scans = allRecords
+    .map((record) => scanFromRecord(record, rawPayload))
+    .filter((scan): scan is RfidScanInput => !!scan);
+
+  if (scans.length > 0) {
+    return scans;
+  }
+
+  return [...new Set(rawPayload.match(/[A-Fa-f0-9]{8,}(?:-[A-Fa-f0-9]{2,})*/g) ?? [])].map((epc) => ({
+    epc,
+    rawPayload,
+  }));
+}
+
+function parseHh100Payload(
+  rawPayload: string,
+  contentType: string | null,
+  defaults?: Partial<RfidScanInput>,
+) {
+  const trimmed = rawPayload.trim();
+
+  if (!trimmed) {
+    throw new ApiFailure(400, 'RFID payload хоосон байна.', 'EMPTY_RFID_PAYLOAD');
+  }
+
+  if (contentType?.includes('application/json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(trimmed) as unknown;
+    } catch {
+      throw new ApiFailure(400, 'RFID JSON payload буруу байна.', 'BAD_RFID_JSON');
+    }
+
+    const scans = parseJsonHh100Payload(parsed, rawPayload, defaults);
+
+    if (scans.length > 0) {
+      return scans;
+    }
+  }
+
+  if (contentType?.includes('application/x-www-form-urlencoded')) {
+    const params = new URLSearchParams(trimmed);
+    const scan = scanFromRecord(Object.fromEntries(params.entries()), rawPayload, defaults);
+
+    if (scan) {
+      return [scan];
+    }
+  }
+
+  const scans = parseTextHh100Payload(rawPayload).map((scan) => ({
+    ...defaults,
+    ...scan,
+  }));
+
+  if (scans.length === 0) {
+    throw new ApiFailure(400, 'EPC is required', 'INVALID_RFID_DATA');
+  }
+
+  return scans;
+}
+
+async function requireRfidDeviceKey(request: Request, env: Env) {
+  const key = new URL(request.url).searchParams.get('key') ?? '';
+
+  if (!key) {
+    throw new ApiFailure(401, 'Invalid RFID device key', 'INVALID_DEVICE_KEY');
+  }
+
+  if (!env.RFID_DEVICE_KEY) {
+    throw new ApiFailure(500, 'RFID device key is not configured', 'RFID_DEVICE_KEY_NOT_CONFIGURED');
+  }
+
+  if (!(await timingSafeEqual(key, env.RFID_DEVICE_KEY))) {
+    throw new ApiFailure(401, 'Invalid RFID device key', 'INVALID_DEVICE_KEY');
+  }
+}
+
+async function readLimitedRequestText(request: Request, maxBytes: number) {
+  const contentLength = Number(request.headers.get('content-length'));
+
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new ApiFailure(413, 'RFID payload хэтэрхий том байна.', 'RFID_PAYLOAD_TOO_LARGE');
+  }
+
+  if (!request.body) {
+    return '';
+  }
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    total += value.byteLength;
+
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new ApiFailure(413, 'RFID payload хэтэрхий том байна.', 'RFID_PAYLOAD_TOO_LARGE');
+    }
+
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return new TextDecoder().decode(bytes);
 }
 
 function livestockResponse(
@@ -1442,16 +1765,18 @@ async function trackUnknownEpc(
 async function ingestScanBatch(
   db: ReturnType<typeof drizzle>,
   userId: string,
-  scans: z.infer<typeof scanInputSchema>[],
+  scans: RfidScanInput[],
   options?: {
     source?: 'APP' | 'DEVICE';
     readerId?: string;
+    successMessage?: string;
   },
 ) {
   const normalizedScans = scans.map((scan) => ({
     ...scan,
     epc: normalizeEpc(scan.epc),
     readerId: normalizeReaderId(options?.readerId ?? scan.readerId),
+    antennaId: cleanOptionalText(scan.antennaId),
   }));
   const lowerEpcs = [...new Set(normalizedScans.map((scan) => scan.epc.toLowerCase()))];
 
@@ -1462,6 +1787,15 @@ async function ingestScanBatch(
     .all();
 
   const tagByLowerEpc = new Map(tags.map((tag) => [tag.epc.toLowerCase(), tag]));
+  const taggedLivestockIds = [...new Set(tags.map((tag) => tag.livestockId))];
+  const taggedLivestock = taggedLivestockIds.length > 0
+    ? await db
+      .select()
+      .from(livestock)
+      .where(and(eq(livestock.userId, userId), inArray(livestock.id, taggedLivestockIds)))
+      .all()
+    : [];
+  const livestockById = new Map(taggedLivestock.map((animal) => [animal.id, animal]));
 
   // Resolve reader ids referenced by this batch: auto-create ones seen for
   // the first time (readerId is a foreign key, so an unregistered id would
@@ -1506,10 +1840,18 @@ async function ingestScanBatch(
   let inserted = 0;
   let duplicates = 0;
   const unknownEpcs: string[] = [];
+  const scanResults: {
+    epc: string;
+    matched: boolean;
+    duplicate: boolean;
+    scanId: string | null;
+    livestock: { id: string; earNumber: string; name?: string | null; status: string } | null;
+  }[] = [];
 
   for (let i = 0; i < normalizedScans.length; i += 1) {
     const scan = normalizedScans[i];
     const tag = tagByLowerEpc.get(scan.epc.toLowerCase());
+    const animal = tag ? livestockById.get(tag.livestockId) : null;
     const scannedAt = scanTimestamp(scan.scannedAt, baseTime + i);
     const duplicate = await findRecentDuplicateScan(
       db,
@@ -1521,23 +1863,65 @@ async function ingestScanBatch(
 
     if (duplicate) {
       duplicates += 1;
+      await db
+        .update(rfidScans)
+        .set({
+          rssi: scan.rssi ?? duplicate.rssi,
+          antennaId: scan.antennaId ?? duplicate.antennaId,
+          scanCount: (duplicate.scanCount ?? 1) + (scan.count ?? 1),
+          rawPayload: scan.rawPayload ?? duplicate.rawPayload,
+        })
+        .where(eq(rfidScans.id, duplicate.id));
+      scanResults.push({
+        epc: scan.epc,
+        matched: !!animal,
+        duplicate: true,
+        scanId: duplicate.id,
+        livestock: animal
+          ? {
+            id: animal.id,
+            earNumber: animal.earNumber,
+            name: animal.name,
+            status: animal.status,
+          }
+          : null,
+      });
       continue;
     }
 
+    const scanId = createId('scan');
     await db.insert(rfidScans).values({
-      id: createId('scan'),
+      id: scanId,
       userId,
-      livestockId: tag?.livestockId ?? null,
+      livestockId: animal?.id ?? null,
       readerId: scan.readerId ? (resolvedReaderId.get(scan.readerId) ?? null) : null,
       epc: scan.epc,
       direction: scan.direction ?? 'UNKNOWN',
       source: options?.source ?? 'APP',
       duplicateOfScanId: null,
+      rssi: scan.rssi ?? null,
+      antennaId: scan.antennaId ?? null,
+      scanCount: scan.count ?? 1,
+      rawPayload: scan.rawPayload ?? null,
       scannedAt,
     });
     inserted += 1;
+    scanResults.push({
+      epc: scan.epc,
+      matched: !!animal,
+      duplicate: false,
+      scanId,
+      livestock: animal
+        ? {
+          id: animal.id,
+          earNumber: animal.earNumber,
+          name: animal.name,
+          status: animal.status,
+        }
+        : null,
+    });
 
-    if (tag) {
+    if (animal) {
       known += 1;
     } else {
       unknown += 1;
@@ -1548,14 +1932,17 @@ async function ingestScanBatch(
     }
   }
 
-  return apiResponse({
+  const data = {
     accepted: scans.length,
     inserted,
     duplicates,
     known,
     unknown,
     unknownEpcs,
-  });
+    scans: scanResults,
+  };
+
+  return options?.successMessage ? apiMessageResponse(options.successMessage, data) : apiResponse(data);
 }
 
 async function handleIngestScans(
@@ -1585,6 +1972,63 @@ async function handleDeviceIngestScans(request: Request, db: ReturnType<typeof d
   return ingestScanBatch(db, reader.userId, input.scans, {
     source: 'DEVICE',
     readerId,
+  });
+}
+
+async function handleHh100RfidScan(request: Request, db: ReturnType<typeof drizzle>, env: Env) {
+  await requireRfidDeviceKey(request, env);
+  const url = new URL(request.url);
+  const contentType = request.headers.get('content-type');
+  const queryReaderId = normalizeReaderId(url.searchParams.get('readerId') ?? url.searchParams.get('reader'));
+  const rawPayload = await readLimitedRequestText(request, MAX_HH100_RAW_PAYLOAD_BYTES);
+  console.info('HH100 RFID raw payload', {
+    contentType,
+    bytes: new TextEncoder().encode(rawPayload).byteLength,
+    payload: rawPayload.slice(0, MAX_LOGGED_HH100_PAYLOAD_CHARS),
+    truncated: rawPayload.length > MAX_LOGGED_HH100_PAYLOAD_CHARS,
+  });
+
+  const scans = parseHh100Payload(rawPayload, contentType, {
+    readerId: queryReaderId ?? undefined,
+  });
+  scans.forEach((scan) => {
+    console.info('[RFID] Received scan', {
+      epc: normalizeEpc(scan.epc),
+      antenna: scan.antennaId ?? null,
+      reader: normalizeReaderId(scan.readerId),
+      rssi: scan.rssi ?? null,
+      count: scan.count ?? 1,
+    });
+  });
+  const readerIds = [
+    ...new Set(scans.map((scan) => normalizeReaderId(scan.readerId)).filter((id): id is string => !!id)),
+  ];
+
+  if (readerIds.length === 0) {
+    throw new ApiFailure(400, 'HH100 payload-д Reader ID алга байна.', 'RFID_READER_ID_REQUIRED');
+  }
+
+  const readers = await db
+    .select()
+    .from(rfidReaders)
+    .where(inArray(rfidReaders.id, readerIds))
+    .all();
+  const readerById = new Map(readers.map((reader) => [reader.id, reader]));
+  const missingReaderId = readerIds.find((readerId) => !readerById.has(readerId));
+
+  if (missingReaderId) {
+    throw new ApiFailure(404, 'RFID уншигч бүртгэлгүй байна.', 'RFID_READER_NOT_REGISTERED');
+  }
+
+  const userIds = [...new Set(readers.map((reader) => reader.userId))];
+
+  if (userIds.length !== 1) {
+    throw new ApiFailure(409, 'RFID уншигчид өөр өөр хэрэглэгч дээр бүртгэлтэй байна.', 'RFID_READER_OWNER_MISMATCH');
+  }
+
+  return ingestScanBatch(db, userIds[0], scans, {
+    source: 'DEVICE',
+    successMessage: 'RFID scan received',
   });
 }
 
@@ -2480,6 +2924,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
 
   if (request.method === 'POST' && path === '/api/devices/scans') {
     return handleDeviceIngestScans(request, db);
+  }
+
+  if (request.method === 'POST' && path === '/api/rfid/scan') {
+    return handleHh100RfidScan(request, db, env);
   }
 
   const user = await getAuthUser(request, db, env);

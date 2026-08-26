@@ -163,6 +163,10 @@ export const rfidScans = sqliteTable(
       .default('UNKNOWN'),
     source: text('source', { enum: ['APP', 'DEVICE'] }).notNull().default('APP'),
     duplicateOfScanId: text('duplicate_of_scan_id'),
+    rssi: integer('rssi'),
+    antennaId: text('antenna_id'),
+    scanCount: integer('scan_count').notNull().default(1),
+    rawPayload: text('raw_payload'),
     scannedAt: text('scanned_at').notNull(),
   },
   (table) => [

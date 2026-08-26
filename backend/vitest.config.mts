@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import path from 'node:path';
 import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-pool-workers';
 import { defineConfig } from 'vitest/config';
@@ -16,6 +18,7 @@ export default defineConfig(async () => {
             SMS_PROVIDER: 'log',
             EXPOSE_OTP: 'true',
             OTP_CODE: '123456',
+            RFID_DEVICE_KEY: 'test-rfid-device-key',
           },
         },
       }),
