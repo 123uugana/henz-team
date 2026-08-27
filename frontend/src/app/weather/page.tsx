@@ -44,15 +44,15 @@ export default function WeatherPage() {
       <AppHeader backHref="/dashboard" title="Цаг агаар" />
 
       <div className="mt-4 flex items-center justify-between">
-        <span className="flex items-center gap-1.5 text-sm text-gray-300">
-          <MapPin className="size-4 text-[#f2a93c]" />
+        <span className="flex items-center gap-1.5 text-sm text-slate-500 dark:text-gray-300">
+          <MapPin className="size-4 text-[var(--chart-accent)]" />
           {data?.label ?? (loading ? "Байршил тогтоож байна..." : "Байршил тодорхойгүй")}
         </span>
         <button
           type="button"
           onClick={refresh}
           disabled={loading}
-          className="flex items-center gap-1 text-xs font-medium text-[#f2a93c] disabled:opacity-50"
+          className="flex items-center gap-1 text-xs font-medium text-[var(--chart-accent)] disabled:opacity-50"
         >
           <LocateFixed className={cn("size-3.5", loading && "animate-pulse")} />
           Шинэчлэх
@@ -61,17 +61,17 @@ export default function WeatherPage() {
 
       <div className="mt-4 flex flex-col gap-5">
         {loading && !data ? (
-          <p className="mt-10 text-center text-sm text-gray-500">
+          <p className="mt-10 text-center text-sm text-slate-500 dark:text-gray-400">
             Цаг агаарын мэдээ ачаалж байна...
           </p>
         ) : error && !data ? (
           <div className="flex flex-col items-center gap-3 py-10 text-center">
-            <CloudOff className="size-8 text-gray-500" strokeWidth={1.5} />
-            <p className="text-sm text-red-400">{error}</p>
+            <CloudOff className="size-8 text-slate-400 dark:text-gray-500" strokeWidth={1.5} />
+            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
             <button
               type="button"
               onClick={refresh}
-              className="text-xs font-medium text-[#f2a93c]"
+              className="text-xs font-medium text-[var(--chart-accent)]"
             >
               Дахин оролдох
             </button>
@@ -79,43 +79,43 @@ export default function WeatherPage() {
         ) : (
           <>
             {data?.fallback ? (
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-slate-500 dark:text-gray-400">
                 Байршил тодорхойлж чадаагүй тул Улаанбаатарын цаг агаарыг харуулж байна.
               </p>
             ) : null}
 
             {todayDangerous && warningText ? (
-              <Card className="flex-row items-start gap-3 bg-red-500/10 p-4 ring-1 ring-red-500/30">
-                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-red-400" />
-                <p className="text-sm font-medium text-red-400">{warningText}</p>
+              <Card className="flex-row items-start gap-3 bg-red-50 dark:bg-red-500/10 p-4 ring-1 ring-red-200 dark:ring-red-500/30">
+                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400" />
+                <p className="text-sm font-medium text-red-600 dark:text-red-400">{warningText}</p>
               </Card>
             ) : null}
 
             {current && CurrentIcon ? (
-              <Card className="gap-4 bg-linear-to-b from-[#1c1408] to-[#141a2c] p-5 ring-1 ring-[#f2a93c]/20">
+                  <Card className="gap-4 bg-linear-to-b from-sky-50 to-blue-50 dark:from-[#0f2633] dark:to-[#0f2b3a] p-5 ring-1 ring-[var(--chart-accent)]/20">
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col">
                     <p className="text-5xl font-bold">{current.temperature}°</p>
-                    <p className="text-sm text-gray-300">{currentInfo?.label}</p>
+                    <p className="text-sm text-slate-600 dark:text-gray-300">{currentInfo?.label}</p>
                   </div>
-                  <CurrentIcon className="size-16 text-[#f2a93c]" strokeWidth={1.25} />
+                  <CurrentIcon className="size-16 text-[var(--chart-accent)]" strokeWidth={1.25} />
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 border-t border-white/10 pt-3 text-center">
+                <div className="grid grid-cols-3 gap-2 border-t border-slate-200 dark:border-white/10 pt-3 text-center">
                   <div className="flex flex-col items-center gap-1">
-                    <Wind className="size-4 text-gray-400" />
+                    <Wind className="size-4 text-slate-400 dark:text-gray-400" />
                     <p className="text-xs font-medium">{current.windSpeed} км/ц</p>
-                    <p className="text-[10px] text-gray-500">Салхи</p>
+                    <p className="text-[10px] text-slate-400 dark:text-gray-500">Салхи</p>
                   </div>
                   <div className="flex flex-col items-center gap-1">
-                    <Droplets className="size-4 text-gray-400" />
+                    <Droplets className="size-4 text-slate-400 dark:text-gray-400" />
                     <p className="text-xs font-medium">{current.humidity}%</p>
-                    <p className="text-[10px] text-gray-500">Чийглэг</p>
+                    <p className="text-[10px] text-slate-400 dark:text-gray-500">Чийглэг</p>
                   </div>
                   <div className="flex flex-col items-center gap-1">
-                    <CloudRain className="size-4 text-gray-400" />
+                    <CloudRain className="size-4 text-slate-400 dark:text-gray-400" />
                     <p className="text-xs font-medium">{today?.precipitationChance ?? 0}%</p>
-                    <p className="text-[10px] text-gray-500">Хур тунадас</p>
+                    <p className="text-[10px] text-slate-400 dark:text-gray-500">Хур тунадас</p>
                   </div>
                 </div>
               </Card>
@@ -123,7 +123,7 @@ export default function WeatherPage() {
 
             {daily.length > 0 ? (
               <div className="flex flex-col gap-3">
-                <h2 className="text-sm font-semibold text-gray-200">7 хоногийн мэдээ</h2>
+                <h2 className="text-sm font-semibold text-slate-700 dark:text-gray-300">7 хоногийн мэдээ</h2>
                 <div className="flex flex-col gap-2">
                   {daily.map((day, index) => {
                     const info = getWeatherCodeInfo(day.weatherCode);
@@ -136,30 +136,30 @@ export default function WeatherPage() {
                         className={cn(
                           "flex-row items-center gap-3 p-3 ring-1",
                           dangerous
-                            ? "bg-red-500/10 ring-red-500/30"
-                            : "bg-[#141a2c] ring-white/5"
+                            ? "bg-red-50 ring-red-200 dark:bg-red-500/10 dark:ring-red-500/30"
+                            : "bg-white ring-slate-200/80 dark:bg-[#141a2c] dark:ring-white/5"
                         )}
                       >
                         <span
                           className={cn(
                             "flex size-9 shrink-0 items-center justify-center rounded-full",
-                            dangerous ? "bg-red-500/15" : "bg-white/5"
+                            dangerous ? "bg-red-500/15" : "bg-slate-100 dark:bg-white/5"
                           )}
                         >
                           <DayIcon
-                            className={cn("size-4", dangerous ? "text-red-400" : "text-[#f2a93c]")}
+                            className={cn("size-4", dangerous ? "text-red-600 dark:text-red-400" : "text-[var(--chart-accent)]")}
                             strokeWidth={1.75}
                           />
                         </span>
                         <div className="flex min-w-0 flex-1 flex-col">
                           <p className="text-sm font-medium">{dayLabel(day.date, index)}</p>
-                          <p className={cn("text-xs", dangerous ? "text-red-400" : "text-gray-400")}>
+                          <p className={cn("text-xs", dangerous ? "text-red-600 dark:text-red-400" : "text-slate-500 dark:text-gray-400")}>
                             {info.label}
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2 text-sm">
                           <span className="font-semibold">{day.maxTemp}°</span>
-                          <span className="text-gray-500">{day.minTemp}°</span>
+                          <span className="text-slate-400 dark:text-gray-500">{day.minTemp}°</span>
                         </div>
                       </Card>
                     );
