@@ -239,10 +239,6 @@ export const devicePushTokens = sqliteTable(
   ],
 );
 
-// Tracks the lifecycle of a physical RFID tag (provisioned -> claimed by a
-// farmer -> locked to their livestock, or damaged/retired). This is separate
-// from `rfidTags`, which binds one EPC to one livestock record for CRUD; this
-// table is the admin-facing registry used to see and reclaim tags globally.
 export const rfidTagRegistry = sqliteTable(
   'rfid_tag_registry',
   {

@@ -1,6 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 
-import { and, count, desc, eq, gte, inArray, isNotNull, isNull, like, lt, ne, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, isNull, like, lt, ne, or, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { z } from 'zod';
 import {
@@ -347,7 +347,8 @@ async function sendInfobipSms(env: Env, to: string, body: string) {
     );
   }
 
-  const response = await fetch(`https://${baseUrl}/sms/2/text/advanced`, {
+  const sender = env.INFOBIP_SENDER?.trim() || 'ServiceSMS';
+  const response = await fetch(`https://${baseUrl}/sms/3/messages`, {
     method: 'POST',
     headers: {
       Authorization: `App ${apiKey}`,
@@ -357,19 +358,24 @@ async function sendInfobipSms(env: Env, to: string, body: string) {
     body: JSON.stringify({
       messages: [
         {
-          from: env.INFOBIP_SENDER ?? 'HentsHurga',
           destinations: [{ to }],
-          text: body,
+          sender,
+          content: {
+            text: body,
+          },
         },
       ],
     }),
   });
 
+  const details = await response.text();
+
   if (!response.ok) {
-    const details = await response.text();
     console.error('Infobip SMS failed', response.status, details);
     throw new ApiFailure(502, 'SMS илгээж чадсангүй.', 'SMS_SEND_FAILED');
   }
+
+  console.info('Infobip SMS accepted', response.status, details);
 }
 
 async function sendOtpSms(env: Env, phoneNumber: string, code: string) {
@@ -976,7 +982,6 @@ async function releaseRegistryTag(
 }
 
 async function sendAlertPush(
-  env: Env,
   db: ReturnType<typeof drizzle>,
   userId: string,
   input: {
@@ -1020,7 +1025,6 @@ async function sendAlertPush(
 
 async function createAlert(
   db: ReturnType<typeof drizzle>,
-  env: Env,
   ctx: ExecutionContext,
   userId: string,
   input: {
@@ -1042,7 +1046,7 @@ async function createAlert(
   });
 
   ctx.waitUntil(
-    sendAlertPush(env, db, userId, {
+    sendAlertPush(db, userId, {
       title: input.title,
       message: input.message,
       livestockId: input.livestockId,
@@ -1088,8 +1092,8 @@ async function handleSendOtp(request: Request, db: ReturnType<typeof drizzle>, e
       ),
     );
 
-  const code =
-    env.SMS_PROVIDER === 'log' && env.OTP_CODE ? env.OTP_CODE : createOtpCode();
+  const configuredOtpCode = env.OTP_CODE?.trim();
+  const code = configuredOtpCode || createOtpCode();
 
   await db.insert(otpCodes).values({
     id: createId('otp'),
@@ -1100,7 +1104,9 @@ async function handleSendOtp(request: Request, db: ReturnType<typeof drizzle>, e
     createdAt: timestamp,
   });
 
-  await sendOtpSms(env, input.phoneNumber, code);
+  if (!configuredOtpCode) {
+    await sendOtpSms(env, input.phoneNumber, code);
+  }
 
   return apiResponse({
     phoneNumber: input.phoneNumber,
@@ -1495,7 +1501,6 @@ async function handleUpdateLivestockStatus(
   db: ReturnType<typeof drizzle>,
   userId: string,
   livestockId: string,
-  env: Env,
   ctx: ExecutionContext,
 ) {
   const input = await parseJson(request, updateLivestockStatusSchema);
@@ -1516,14 +1521,14 @@ async function handleUpdateLivestockStatus(
       .where(eq(livestock.id, livestockId));
 
     if (input.status === 'MISSING') {
-      await createAlert(db, env, ctx, userId, {
+      await createAlert(db, ctx, userId, {
         type: 'MISSING',
         title: 'Мал дутуу',
         message: `${existing.earNumber} дугаартай мал дутуу болсон.`,
         livestockId: existing.id,
       });
     } else if (existing.status === 'MISSING' && input.status === 'ACTIVE') {
-      await createAlert(db, env, ctx, userId, {
+      await createAlert(db, ctx, userId, {
         type: 'FOUND',
         title: 'Мал олдлоо',
         message: `${existing.earNumber} дугаартай мал олдсон.`,
@@ -2090,7 +2095,6 @@ async function handleListAlerts(db: ReturnType<typeof drizzle>, userId: string) 
 }
 
 async function handleReadAlert(
-  request: Request,
   db: ReturnType<typeof drizzle>,
   userId: string,
   alertId: string,
@@ -2149,7 +2153,6 @@ async function handleMissingLivestock(db: ReturnType<typeof drizzle>, userId: st
 
 async function handleSearchSignal(
   db: ReturnType<typeof drizzle>,
-  env: Env,
   ctx: ExecutionContext,
   user: AuthUser,
 ) {
@@ -2163,7 +2166,7 @@ async function handleSearchSignal(
     throw new ApiFailure(409, 'Дутуу гэж тэмдэглэсэн мал алга байна.', 'NO_MISSING_LIVESTOCK');
   }
 
-  await createAlert(db, env, ctx, user.id, {
+  await createAlert(db, ctx, user.id, {
     type: 'SYSTEM',
     title: 'Хайлтын дохио илгээгдлээ',
     message: `${missingRows.length} малын хайлтын хүсэлт бүртгэгдлээ.`,
@@ -2176,7 +2179,7 @@ async function handleSearchSignal(
     .get();
 
   if (owner?.dealerId) {
-    await createAlert(db, env, ctx, owner.dealerId, {
+    await createAlert(db, ctx, owner.dealerId, {
       type: 'MISSING',
       title: 'Мал хайх хүсэлт',
       message: `${user.name || user.phoneNumber} ${missingRows.length} дутуу малын хайлтын дохио илгээлээ.`,
@@ -2957,7 +2960,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
   }
 
   if (request.method === 'POST' && path === '/api/search-signal') {
-    return handleSearchSignal(db, env, ctx, user);
+    return handleSearchSignal(db, ctx, user);
   }
 
   if (request.method === 'GET' && path === '/api/reports/history') {
@@ -3068,7 +3071,6 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
       db,
       user.id,
       livestockStatusMatch[1],
-      env,
       ctx,
     );
   }
@@ -3082,7 +3084,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
   const alertReadMatch = path.match(/^\/api\/alerts\/([^/]+)\/read$/);
 
   if (alertReadMatch && request.method === 'PATCH') {
-    return handleReadAlert(request, db, user.id, alertReadMatch[1]);
+    return handleReadAlert(db, user.id, alertReadMatch[1]);
   }
 
   const tagUnlockMatch = path.match(/^\/api\/admin\/tags\/([^/]+)\/unlock$/);

@@ -4,6 +4,9 @@ compatibility_date = "2026-08-08"
 account_id = "4f092751ca31d58d93a619ad88dc4a2e"
 workers_dev = true
 
+[vars]
+OTP_CODE = "123456"
+
 [dev]
 ip = "0.0.0.0"
 port = 8787

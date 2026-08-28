@@ -1,4 +1,8 @@
 {
+  "python.defaultInterpreterPath": "${workspaceFolder}\\tools\\rfid_bridge\\.venv\\Scripts\\python.exe",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}\\tools\\rfid_bridge\\.venv\\Lib\\site-packages"
+  ],
   "files.exclude": {
     "**/.wrangler": true
   },

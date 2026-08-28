@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
-import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { applyD1Migrations, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import type { D1Migration } from '@cloudflare/vitest-pool-workers';
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
@@ -7,7 +8,9 @@ import worker from '../src/index';
 import { rfidScans, users } from '../src/db/schema';
 
 type WorkerEnv = Parameters<typeof worker.fetch>[1];
-const testEnv = env as unknown as WorkerEnv;
+const testEnv = env as unknown as WorkerEnv & { TEST_MIGRATIONS: D1Migration[] };
+
+await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
 
 async function makeDealer(userId: string) {
   const db = drizzle(testEnv.DB);

@@ -1,0 +1,10 @@
+{
+  "include": [
+    "backend/tools/rfid_bridge"
+  ],
+  "venvPath": "backend/tools/rfid_bridge",
+  "venv": ".venv",
+  "extraPaths": [
+    "backend/tools/rfid_bridge/.venv/Lib/site-packages"
+  ]
+}

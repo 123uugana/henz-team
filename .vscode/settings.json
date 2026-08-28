@@ -1,0 +1,23 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}\\backend\\tools\\rfid_bridge\\.venv\\Scripts\\python.exe",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}\\backend\\tools\\rfid_bridge\\.venv\\Lib\\site-packages"
+  ],
+  "files.exclude": {
+    "**/.wrangler": true,
+    "**/.venv": true,
+    "**/downloads": true
+  },
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.wrangler/**": true,
+    "**/.venv/**": true,
+    "**/downloads/**": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.wrangler": true,
+    "**/.venv": true,
+    "**/downloads": true
+  }
+}
