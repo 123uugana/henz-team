@@ -51,9 +51,9 @@ try {
       stdio: "inherit",
     })
     : spawnSync(command, args, {
-    cwd: safeCwd,
-    env: { ...process.env, INIT_CWD: safeCwd, PWD: safeCwd },
-    stdio: "inherit",
+      cwd: safeCwd,
+      env: { ...process.env, INIT_CWD: safeCwd, PWD: safeCwd },
+      stdio: "inherit",
     });
 
   process.exitCode = result.status ?? 1;
