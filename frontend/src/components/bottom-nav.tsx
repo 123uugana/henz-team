@@ -9,7 +9,7 @@ const NAV_ITEMS = [
   { href: "/dashboard", label: "Нүүр", icon: Home },
   { href: "/missing", label: "Тооллого", icon: ClipboardList },
   { href: "/animals/new", label: "Мал нэмэх", icon: Plus, accent: true },
-  { href: "/animals", label: "Малууд", icon: PawPrint },
+  { href: "/animals", label: "Бүртгэл", icon: PawPrint },
   { href: "/weather", label: "Цаг агаар", icon: CloudSun },
 ] as const;
 
@@ -32,7 +32,9 @@ export function BottomNav() {
               href={item.href}
               className={cn(
                 "flex flex-1 flex-col items-center gap-1 py-1",
-                active ? "text-slate-900 dark:text-white" : "text-slate-500 dark:text-gray-500"
+                active
+                  ? "text-slate-900 dark:text-white"
+                  : "text-slate-500 dark:text-gray-500",
               )}
             >
               <span
@@ -40,7 +42,7 @@ export function BottomNav() {
                   "relative flex items-center justify-center",
                   "accent" in item && item.accent
                     ? "-mt-6 size-12 rounded-full bg-[#f2a93c] text-[#1a1206] shadow-lg shadow-[#f2a93c]/30"
-                    : "size-8"
+                    : "size-8",
                 )}
               >
                 <Icon className="size-5" strokeWidth={active ? 2.25 : 1.75} />
@@ -48,7 +50,9 @@ export function BottomNav() {
               <span
                 className={cn(
                   "text-[11px]",
-                  active ? "text-[#a85b0a] dark:text-[#f2a93c]" : "text-slate-500 dark:text-gray-500"
+                  active
+                    ? "text-[#a85b0a] dark:text-[#f2a93c]"
+                    : "text-slate-500 dark:text-gray-500",
                 )}
               >
                 {item.label}

@@ -20,3 +20,7 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 .vercel
+
+# rfid-bridge: vendor SDK is extracted locally per its README, not committed
+rfid-bridge/vendor/
+__pycache__/

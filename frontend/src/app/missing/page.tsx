@@ -2,10 +2,17 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Clock, Megaphone, PawPrint, Rabbit, ShieldAlert, TriangleAlert } from "lucide-react";
+import {
+  Clock,
+  Megaphone,
+  ShieldAlert,
+  Tag,
+  TriangleAlert,
+} from "lucide-react";
 import { PhoneFrame } from "@/components/phone-frame";
 import { AppHeader } from "@/components/app-header";
 import { BottomNav } from "@/components/bottom-nav";
+import { SpeciesIcon } from "@/components/species-icon";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,20 +44,6 @@ function relativeTime(iso?: string) {
   return `${Math.floor(hours / 24)} өдрийн өмнө`;
 }
 
-function SpeciesIcon({
-  species,
-  className,
-}: {
-  species: Species;
-  className?: string;
-}) {
-  return species === "SHEEP" ? (
-    <PawPrint className={className} strokeWidth={1.5} />
-  ) : (
-    <Rabbit className={className} strokeWidth={1.5} />
-  );
-}
-
 export default function MissingAnimalsPage() {
   useAuthGuard();
   const {
@@ -62,10 +55,17 @@ export default function MissingAnimalsPage() {
   const [signaling, setSignaling] = useState(false);
   const [signalMessage, setSignalMessage] = useState<string | null>(null);
 
+  const unclaimedCount = useMemo(() => {
+    if (!scans) return 0;
+    return new Set(scans.filter((s) => !s.livestock && !s.foreignOwner).map((s) => s.epc)).size;
+  }, [scans]);
+
   const foreignCount = useMemo(() => {
     if (!scans) return 0;
-    return new Set(scans.filter((s) => !s.livestock).map((s) => s.epc)).size;
+    return new Set(scans.filter((s) => s.foreignOwner).map((s) => s.epc)).size;
   }, [scans]);
+
+  const arrivedCount = unclaimedCount + foreignCount;
 
   const lastRecorded = useMemo(() => {
     if (!missing || missing.length === 0) return null;
@@ -95,10 +95,12 @@ export default function MissingAnimalsPage() {
       setSignalMessage(
         result.dealerNotified
           ? `${result.missingCount} малын хайлтын дохиог танд болон гэрээт байгууллагад илгээлээ.`
-          : `${result.missingCount} малын хайлтын хүсэлт бүртгэгдлээ.`
+          : `${result.missingCount} малын хайлтын хүсэлт бүртгэгдлээ.`,
       );
     } catch (err) {
-      setSignalMessage(err instanceof Error ? err.message : "Дохио илгээж чадсангүй.");
+      setSignalMessage(
+        err instanceof Error ? err.message : "Дохио илгээж чадсангүй.",
+      );
     } finally {
       setSignaling(false);
     }
@@ -109,7 +111,10 @@ export default function MissingAnimalsPage() {
       <AppHeader backHref="/dashboard" />
 
       <Tabs defaultValue="missing" className="mt-6">
-        <TabsList variant="line" className="w-full justify-start border-b border-slate-200 dark:border-white/10 pb-0">
+        <TabsList
+          variant="line"
+          className="w-full justify-start border-b border-slate-200 dark:border-white/10 pb-0"
+        >
           <TabsTrigger
             value="missing"
             className="text-slate-500 dark:text-gray-400 data-active:text-[#a85b0a] data-active:after:bg-[#f2a93c]"
@@ -120,15 +125,19 @@ export default function MissingAnimalsPage() {
             value="arrived"
             className="text-slate-500 dark:text-gray-400 data-active:text-[#a85b0a] data-active:after:bg-[#f2a93c]"
           >
-            Ирсэн ({foreignCount})
+            Ирсэн ({arrivedCount})
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="missing" className="mt-4 flex flex-col gap-4">
           {loadingMissing ? (
-            <p className="text-center text-sm text-slate-500 dark:text-gray-400">Ачаалж байна...</p>
+            <p className="text-center text-sm text-slate-500 dark:text-gray-400">
+              Ачаалж байна...
+            </p>
           ) : missingError ? (
-            <p className="text-center text-sm text-red-600 dark:text-red-400">{missingError}</p>
+            <p className="text-center text-sm text-red-600 dark:text-red-400">
+              {missingError}
+            </p>
           ) : (
             <>
               <Card className="flex-row items-start gap-3 bg-amber-50 dark:bg-[#1c1408] p-4 ring-1 ring-[#f2a93c]/20">
@@ -154,17 +163,30 @@ export default function MissingAnimalsPage() {
                   {(Object.keys(speciesBreakdown) as Species[])
                     .filter((s) => speciesBreakdown[s] > 0)
                     .map((s) => (
-                      <Card key={s} className="items-center gap-1 bg-white dark:bg-[#141a2c] p-4 text-center ring-1 ring-slate-200/80 dark:ring-white/5">
-                        <SpeciesIcon species={s} className="size-5 text-[#a85b0a] dark:text-[#f2a93c]" />
-                        <p className="text-2xl font-bold">{speciesBreakdown[s]}</p>
-                        <p className="text-xs text-slate-500 dark:text-gray-400">{SPECIES_LABEL[s]} дутсан</p>
+                      <Card
+                        key={s}
+                        className="items-center gap-1 bg-white dark:bg-[#141a2c] p-4 text-center ring-1 ring-slate-200/80 dark:ring-white/5"
+                      >
+                        <SpeciesIcon
+                          species={s}
+                          className="size-5 text-[#a85b0a] dark:text-[#f2a93c]"
+                        />
+                        <p className="text-2xl font-bold">
+                          {speciesBreakdown[s]}
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-gray-400">
+                          {SPECIES_LABEL[s]} дутсан
+                        </p>
                       </Card>
                     ))}
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">
                   {(missing ?? []).map((animal: MissingLivestockEntry) => (
-                    <Card key={animal.id} className="gap-3 bg-white dark:bg-[#141a2c] p-4 ring-1 ring-slate-200/80 dark:ring-white/5">
+                    <Card
+                      key={animal.id}
+                      className="gap-3 bg-white dark:bg-[#141a2c] p-4 ring-1 ring-slate-200/80 dark:ring-white/5"
+                    >
                       <div className="flex items-center gap-3">
                         <span className="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-100 dark:bg-white/5">
                           {animal.imageUrl ? (
@@ -175,7 +197,10 @@ export default function MissingAnimalsPage() {
                               className="h-full w-full object-cover"
                             />
                           ) : (
-                            <SpeciesIcon species={animal.species} className="size-6 text-[#a85b0a] dark:text-[#f2a93c]" />
+                            <SpeciesIcon
+                              species={animal.species}
+                              className="size-6 text-[#a85b0a] dark:text-[#f2a93c]"
+                            />
                           )}
                         </span>
                         <div className="flex min-w-0 flex-col gap-0.5">
@@ -213,35 +238,36 @@ export default function MissingAnimalsPage() {
                   ))}
                 </div>
               )}
-              <Button
-                variant="brand"
-                size="xl"
-                className="mt-2 w-full bg-linear-to-r from-[#f2a93c] to-[#e08a2c]"
-                disabled={missingCount === 0 || signaling}
-                onClick={handleSearchSignal}
-              >
-                <Megaphone />
-                {signaling ? "Илгээж байна..." : "Хайлтын дохио илгээх"}
-              </Button>
-              {signalMessage ? <p className="text-center text-sm text-slate-600 dark:text-gray-300">{signalMessage}</p> : null}
             </>
           )}
         </TabsContent>
 
-        <TabsContent
-          value="arrived"
-          className="mt-4 flex flex-col items-center gap-2 py-10 text-center"
-        >
+        <TabsContent value="arrived" className="mt-4 flex flex-col gap-4">
           {loadingScans ? (
-            <p className="text-sm text-slate-500 dark:text-gray-400">Ачаалж байна...</p>
+            <p className="text-center text-sm text-slate-500 dark:text-gray-400">
+              Ачаалж байна...
+            </p>
+          ) : arrivedCount === 0 ? (
+            <p className="py-10 text-center text-sm text-slate-500 dark:text-gray-400">
+              Танигдаагүй RFID шошго алга байна.
+            </p>
           ) : (
-            <>
-              <ShieldAlert className="size-8 text-[#a85b0a] dark:text-[#f2a93c]" strokeWidth={1.5} />
-              <p className="text-3xl font-bold">{foreignCount}</p>
-              <p className="max-w-56 text-sm text-slate-500 dark:text-gray-400">
-                бүртгэлгүй эсвэл өөр өрхийн RFID шошго таны хашаанд илэрлээ
-              </p>
-            </>
+            <div className="grid grid-cols-2 gap-3">
+              <Card className="items-center gap-1 bg-white dark:bg-[#141a2c] p-4 text-center ring-1 ring-slate-200/80 dark:ring-white/5">
+                <Tag className="size-5 text-[#a85b0a] dark:text-[#f2a93c]" strokeWidth={1.5} />
+                <p className="text-2xl font-bold">{unclaimedCount}</p>
+                <p className="text-xs text-slate-500 dark:text-gray-400">
+                  Бүртгэлгүй шошго
+                </p>
+              </Card>
+              <Card className="items-center gap-1 bg-white dark:bg-[#141a2c] p-4 text-center ring-1 ring-slate-200/80 dark:ring-white/5">
+                <ShieldAlert className="size-5 text-[#a85b0a] dark:text-[#f2a93c]" strokeWidth={1.5} />
+                <p className="text-2xl font-bold">{foreignCount}</p>
+                <p className="text-xs text-slate-500 dark:text-gray-400">
+                  Өөр малчны шошго
+                </p>
+              </Card>
+            </div>
           )}
         </TabsContent>
       </Tabs>

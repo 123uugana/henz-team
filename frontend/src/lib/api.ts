@@ -307,6 +307,8 @@ export interface RecentScan {
   scannedAt: string;
   reader: { id: string; name: string } | null;
   livestock: { id: string; earNumber: string; name?: string } | null;
+  /** True when this EPC is registered to a livestock owned by a different user. */
+  foreignOwner: boolean;
 }
 
 /** Recent scans across all readers, including ones whose tag isn't one of mine. */

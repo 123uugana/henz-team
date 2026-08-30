@@ -116,6 +116,11 @@ The system supports two reader types:
 - **HL7202K8** (Bluetooth handheld, Indy R2000): pair it with a phone/tablet app
   over Bluetooth and have the app forward reads to `POST /api/scans`.
 
+For the Hopeland HL7202K8 Bluetooth reader and Wing HY820 PDA specifically,
+`backend/rfid-bridge/` has a PC-based Python bridge (built on Hopeland's own
+`RFIDReaderAPI` SDK) that connects to both over Bluetooth/TCP and forwards
+scans to `POST /api/devices/scans` without needing a phone app in between.
+
 Register a reader with a stable id, location, and optional device secret:
 
 ```bash

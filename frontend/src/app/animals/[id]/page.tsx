@@ -10,14 +10,13 @@ import {
   Lock,
   MapPin,
   Navigation,
-  PawPrint,
   Pencil,
-  Rabbit,
   TriangleAlert,
   Unlock,
 } from "lucide-react";
 import { PhoneFrame } from "@/components/phone-frame";
 import { AppHeader } from "@/components/app-header";
+import { SpeciesIcon } from "@/components/species-icon";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -216,10 +215,11 @@ function AnimalDetailContent({ id }: { id: string }) {
             alt={animal.name || animal.earNumber}
             className="h-full w-full object-cover"
           />
-        ) : animal.species === "SHEEP" ? (
-          <PawPrint className="size-20 text-[#a85b0a]/70 dark:text-[#f2a93c]/70" strokeWidth={1} />
         ) : (
-          <Rabbit className="size-20 text-[#a85b0a]/70 dark:text-[#f2a93c]/70" strokeWidth={1} />
+          <SpeciesIcon
+            species={animal.species}
+            className="size-20 text-[#a85b0a]/70 dark:text-[#f2a93c]/70"
+          />
         )}
         <span className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-full bg-black/50 px-3 py-1.5 text-xs text-white">
           <Camera className="size-3.5" />

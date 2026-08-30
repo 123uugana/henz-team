@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { LayoutGrid, List, PawPrint, Rabbit, Search } from "lucide-react";
+import { LayoutGrid, List, Search } from "lucide-react";
+import { SpeciesIcon } from "@/components/species-icon";
 import { PhoneFrame } from "@/components/phone-frame";
 import { AppHeader } from "@/components/app-header";
 import { BottomNav } from "@/components/bottom-nav";
@@ -261,14 +262,6 @@ export default function AnimalListPage() {
 
       <BottomNav />
     </PhoneFrame>
-  );
-}
-
-function SpeciesIcon({ species, className }: { species: Species; className?: string }) {
-  return species === "SHEEP" ? (
-    <PawPrint className={className} strokeWidth={1.5} />
-  ) : (
-    <Rabbit className={className} strokeWidth={1.5} />
   );
 }
 

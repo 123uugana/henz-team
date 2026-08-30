@@ -8,13 +8,12 @@ import {
   CircleAlert,
   Lock,
   Mars,
-  PawPrint,
-  Rabbit,
   ScanLine,
   Venus,
 } from "lucide-react";
 import { PhoneFrame } from "@/components/phone-frame";
 import { AppHeader } from "@/components/app-header";
+import { GoatIcon, SheepIcon } from "@/components/species-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,10 +29,10 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 import { resizeImage } from "@/lib/image";
 import { cn } from "@/lib/utils";
 
-const SPECIES_INFO: Record<Species, { label: string; icon: typeof PawPrint }> =
+const SPECIES_INFO: Record<Species, { label: string; icon: typeof SheepIcon }> =
   {
-    SHEEP: { label: "Хонь", icon: PawPrint },
-    GOAT: { label: "Ямаа", icon: Rabbit },
+    SHEEP: { label: "Хонь", icon: SheepIcon },
+    GOAT: { label: "Ямаа", icon: GoatIcon },
   };
 
 const GENDERS = [
@@ -189,7 +188,7 @@ export default function RegisterAnimalPage() {
           <div className="flex items-center gap-2 rounded-2xl bg-emerald-400/10 px-4 py-3">
             {(() => {
               const Icon = SPECIES_INFO[species].icon;
-              return <Icon className="size-4 text-emerald-700 dark:text-emerald-400" strokeWidth={1.75} />;
+              return <Icon className="size-4 text-emerald-700 dark:text-emerald-400" />;
             })()}
             <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
               {SPECIES_INFO[species].label} — автоматаар танигдлаа ({epc})

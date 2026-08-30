@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.RfidDemo" parent="Theme.AppCompat.DayNight" />
+
+    <style name="Theme.RfidDemo.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#F2A93C</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.RfidDemo</item>
+    </style>
+</resources>

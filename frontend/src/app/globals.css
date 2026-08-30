@@ -142,3 +142,33 @@
     @apply font-sans;
   }
 }
+
+.radar-logo__ring {
+  transform-origin: 54px 54px;
+}
+
+.radar-logo--animated .radar-logo__ring {
+  animation: radar-ping 1.35s cubic-bezier(0.2, 0.7, 0.3, 1) infinite;
+  opacity: 0;
+}
+
+@keyframes radar-ping {
+  0% {
+    transform: scale(0.4);
+    opacity: 0.9;
+  }
+  70% {
+    opacity: 0.15;
+  }
+  100% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .radar-logo--animated .radar-logo__ring {
+    animation: none;
+    opacity: 0.6;
+  }
+}

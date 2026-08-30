@@ -6,11 +6,23 @@ import Link from "next/link";
 import { BadgeCheck, Building2, Camera, LogOut, User } from "lucide-react";
 import { PhoneFrame } from "@/components/phone-frame";
 import { AppHeader } from "@/components/app-header";
-import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Avatar,
+  AvatarBadge,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ApiError, getMe, logout, updateProfile, uploadImage, type AuthUser } from "@/lib/api";
+import {
+  ApiError,
+  getMe,
+  logout,
+  updateProfile,
+  uploadImage,
+  type AuthUser,
+} from "@/lib/api";
 import { useApi } from "@/lib/use-api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { resizeImage } from "@/lib/image";
@@ -53,7 +65,9 @@ export default function ProfilePage() {
       setData(updated);
       setSaved(true);
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : "Хадгалж чадсангүй.");
+      setSaveError(
+        err instanceof ApiError ? err.message : "Хадгалж чадсангүй.",
+      );
     } finally {
       setSaving(false);
     }
@@ -76,7 +90,7 @@ export default function ProfilePage() {
       setPhotoError(
         err instanceof ApiError || err instanceof Error
           ? err.message
-          : "Зураг оруулж чадсангүй."
+          : "Зураг оруулж чадсангүй.",
       );
     } finally {
       setPhotoUploading(false);
@@ -110,15 +124,25 @@ export default function ProfilePage() {
         />
         <button
           type="button"
-          aria-label={me?.imageUrl ? "Профайл зураг солих" : "Профайл зураг нэмэх"}
+          aria-label={
+            me?.imageUrl ? "Профайл зураг солих" : "Профайл зураг нэмэх"
+          }
           className="rounded-full outline-none ring-[#f2a93c] focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-70 dark:ring-offset-[#0d111b]"
           disabled={photoUploading || loading}
           onClick={() => photoInputRef.current?.click()}
         >
           <Avatar size="lg" className="size-24">
-            {me?.imageUrl ? <AvatarImage src={me.imageUrl} alt={`${me.name || "Хэрэглэгч"}-ийн зураг`} /> : null}
+            {me?.imageUrl ? (
+              <AvatarImage
+                src={me.imageUrl}
+                alt={`${me.name || "Хэрэглэгч"}-ийн зураг`}
+              />
+            ) : null}
             <AvatarFallback className="bg-amber-50 dark:bg-[#1c1408]">
-              <User className="size-10 text-[#a85b0a]/70 dark:text-[#f2a93c]/70" strokeWidth={1.5} />
+              <User
+                className="size-10 text-[#a85b0a]/70 dark:text-[#f2a93c]/70"
+                strokeWidth={1.5}
+              />
             </AvatarFallback>
             <AvatarBadge className="size-8 bg-[#f2a93c] text-[#1a1206]">
               <Camera className="size-4" />
@@ -131,21 +155,37 @@ export default function ProfilePage() {
           disabled={photoUploading || loading}
           onClick={() => photoInputRef.current?.click()}
         >
-          {photoUploading ? "Зураг оруулж байна..." : me?.imageUrl ? "Зураг солих" : "Зураг нэмэх"}
+          {photoUploading
+            ? "Зураг оруулж байна..."
+            : me?.imageUrl
+              ? "Зураг солих"
+              : "Зураг нэмэх"}
         </button>
-        {photoError ? <p className="text-center text-sm text-red-600 dark:text-red-400">{photoError}</p> : null}
+        {photoError ? (
+          <p className="text-center text-sm text-red-600 dark:text-red-400">
+            {photoError}
+          </p>
+        ) : null}
       </div>
 
       {loading ? (
-        <p className="mt-10 text-center text-sm text-slate-500 dark:text-gray-400">Ачаалж байна...</p>
+        <p className="mt-10 text-center text-sm text-slate-500 dark:text-gray-400">
+          Ачаалж байна...
+        </p>
       ) : error ? (
-        <p className="mt-10 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
+        <p className="mt-10 text-center text-sm text-red-600 dark:text-red-400">
+          {error}
+        </p>
       ) : (
         <div className="mt-8 flex flex-col gap-5">
           <div className="flex flex-col gap-2">
-            <Label className="text-slate-700 dark:text-gray-300">Утасны дугаар</Label>
+            <Label className="text-slate-700 dark:text-gray-300">
+              Утасны дугаар
+            </Label>
             <div className="flex h-14 items-center justify-between rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] px-4">
-              <span className="text-base text-slate-900 dark:text-white">+976 {me?.phoneNumber}</span>
+              <span className="text-base text-slate-900 dark:text-white">
+                +976 {me?.phoneNumber}
+              </span>
               <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
                 <BadgeCheck className="size-3.5" />
                 Баталгаажсан
@@ -154,7 +194,10 @@ export default function ProfilePage() {
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="lastName" className="text-slate-700 dark:text-gray-300">
+            <Label
+              htmlFor="lastName"
+              className="text-slate-700 dark:text-gray-300"
+            >
               Овог
             </Label>
             <Input
@@ -167,7 +210,10 @@ export default function ProfilePage() {
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="firstName" className="text-slate-700 dark:text-gray-300">
+            <Label
+              htmlFor="firstName"
+              className="text-slate-700 dark:text-gray-300"
+            >
               Нэр
             </Label>
             <Input
@@ -179,8 +225,16 @@ export default function ProfilePage() {
             />
           </div>
 
-          {saveError ? <p className="text-sm text-red-600 dark:text-red-400">{saveError}</p> : null}
-          {saved ? <p className="text-sm text-emerald-700 dark:text-emerald-400">Хадгалагдлаа.</p> : null}
+          {saveError ? (
+            <p className="text-sm text-red-600 dark:text-red-400">
+              {saveError}
+            </p>
+          ) : null}
+          {saved ? (
+            <p className="text-sm text-emerald-700 dark:text-emerald-400">
+              Хадгалагдлаа.
+            </p>
+          ) : null}
         </div>
       )}
 
@@ -193,18 +247,6 @@ export default function ProfilePage() {
       >
         {saving ? "Хадгалж байна..." : "Хадгалах"}
       </Button>
-
-      {me?.role === "FARMER" ? (
-        <Button
-          variant="outline"
-          size="xl"
-          className="mt-3 w-full border-slate-200 bg-white dark:border-white/10 dark:bg-transparent"
-          render={<Link href="/dealer-registration" />}
-        >
-          <Building2 />
-          Гэрээт байгууллагын хүсэлт
-        </Button>
-      ) : null}
 
       <Button
         variant="destructive"

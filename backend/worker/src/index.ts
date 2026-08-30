@@ -2051,6 +2051,16 @@ async function handleListScans(db: ReturnType<typeof drizzle>, userId: string) {
     .limit(RECENT_SCANS_LIMIT)
     .all();
 
+  const unmatchedEpcs = [...new Set(rows.filter((scan) => !scan.livestockId).map((scan) => scan.epc))];
+  const claimedByOthers = unmatchedEpcs.length > 0
+    ? await db
+        .select({ epc: rfidTags.epc })
+        .from(rfidTags)
+        .where(and(inArray(rfidTags.epc, unmatchedEpcs), ne(rfidTags.userId, userId)))
+        .all()
+    : [];
+  const claimedByOthersEpcs = new Set(claimedByOthers.map((tag) => tag.epc));
+
   return apiResponse(
     rows.map((scan) => ({
       id: scan.id,
@@ -2065,6 +2075,7 @@ async function handleListScans(db: ReturnType<typeof drizzle>, userId: string) {
             name: scan.name ?? undefined,
           }
         : null,
+      foreignOwner: !scan.livestockId && claimedByOthersEpcs.has(scan.epc),
     })),
   );
 }
@@ -2115,12 +2126,21 @@ async function handleReadAllAlerts(db: ReturnType<typeof drizzle>, userId: strin
 }
 
 async function handleMissingLivestock(db: ReturnType<typeof drizzle>, userId: string) {
-  const rows = await db
-    .select()
-    .from(livestock)
-    .where(and(eq(livestock.userId, userId), eq(livestock.status, 'MISSING')))
-    .orderBy(livestock.earNumber)
-    .all();
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [allLivestock, scansToday] = await Promise.all([
+    db.select().from(livestock).where(eq(livestock.userId, userId)).orderBy(livestock.earNumber).all(),
+    db
+      .select({ livestockId: rfidScans.livestockId })
+      .from(rfidScans)
+      .where(and(eq(rfidScans.userId, userId), like(rfidScans.scannedAt, `${today}%`)))
+      .all(),
+  ]);
+
+  const scannedTodayIds = new Set(
+    scansToday.map((scan) => scan.livestockId).filter((id): id is string => Boolean(id)),
+  );
+  const rows = allLivestock.filter((row) => !scannedTodayIds.has(row.id));
 
   const data = await Promise.all(
     rows.map(async (row) => {
