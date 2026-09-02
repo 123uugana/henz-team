@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { ClerkProvider } from "@clerk/nextjs";
+import { ClerkTokenBridge } from "@/components/clerk-token-bridge";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -7,6 +9,20 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
+  const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const content = clerkPublishableKey ? (
+    <ClerkProvider
+      publishableKey={clerkPublishableKey}
+      signInUrl="/admin/login"
+      signUpUrl="/admin/sign-up"
+    >
+      <ClerkTokenBridge />
+      {children}
+    </ClerkProvider>
+  ) : (
+    children
+  );
+
   return (
     <html
       lang="mn"
@@ -20,7 +36,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           }}
         />
       </head>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">{content}</body>
     </html>
   );
 }

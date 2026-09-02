@@ -17,6 +17,7 @@
     "build": "tsc --noEmit"
   },
   "dependencies": {
+    "@clerk/backend": "^3.16.13",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "zod": "^4.4.3"

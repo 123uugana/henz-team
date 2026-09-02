@@ -1,11 +1,15 @@
 name = "hents-hurga-api"
 main = "worker/src/index.ts"
 compatibility_date = "2026-08-08"
+compatibility_flags = ["nodejs_compat"]
 account_id = "4f092751ca31d58d93a619ad88dc4a2e"
 workers_dev = true
 
 [vars]
 OTP_CODE = "123456"
+RFID_DUPLICATE_WINDOW_SECONDS = "300"
+ADMIN_EMAILS = "uuganbayrxx0716@gmail.com"
+CLERK_AUTHORIZED_PARTIES = "http://localhost:3000"
 
 [dev]
 ip = "0.0.0.0"

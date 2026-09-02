@@ -19,5 +19,9 @@
     "**/.wrangler": true,
     "**/.venv": true,
     "**/downloads": true
-  }
+  },
+  "css.lint.unknownAtRules": "ignore",
+  "scss.lint.unknownAtRules": "ignore",
+  "less.lint.unknownAtRules": "ignore",
+  "tailwindCSS.experimental.configFile": "frontend/src/app/globals.css"
 }

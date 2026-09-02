@@ -2,6 +2,7 @@
 
 import { and, count, desc, eq, inArray, isNotNull, isNull, like, lt, ne, or, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
+import { createClerkClient, verifyToken } from '@clerk/backend';
 import { z } from 'zod';
 import {
   alerts,
@@ -29,6 +30,11 @@ type Env = {
   INFOBIP_API_KEY?: string;
   INFOBIP_SENDER?: string;
   RFID_DEVICE_KEY?: string;
+  RFID_DUPLICATE_WINDOW_SECONDS?: string;
+  CLERK_SECRET_KEY?: string;
+  CLERK_JWT_KEY?: string;
+  CLERK_AUTHORIZED_PARTIES?: string;
+  ADMIN_EMAILS?: string;
 };
 
 type AuthUser = {
@@ -46,13 +52,18 @@ type TokenPayload = {
   exp?: number;
 };
 
+type ClerkMetadata = {
+  role?: unknown;
+  admin?: unknown;
+};
+
 const OTP_RESEND_COOLDOWN_MS = 60_000;
 const OTP_MAX_ATTEMPTS = 5;
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const MAX_HH100_RAW_PAYLOAD_BYTES = 128 * 1024;
 const MAX_LOGGED_HH100_PAYLOAD_CHARS = 4096;
 const RECENT_SCANS_LIMIT = 50;
-const DUPLICATE_SCAN_WINDOW_MS = 30_000;
+const DEFAULT_DUPLICATE_SCAN_WINDOW_MS = 5 * 60_000;
 
 const jsonHeaders = {
   'Access-Control-Allow-Headers': 'Authorization, Content-Type',
@@ -149,6 +160,37 @@ const decideDealerRegistrationSchema = z.object({
   status: z.enum(['APPROVED', 'REJECTED']),
 });
 
+const adminUserStatusSchema = z.object({
+  status: z.enum(['ACTIVE', 'SUSPENDED']),
+});
+
+const adminUserRoleSchema = z.object({
+  role: z.enum(['FARMER', 'ADMIN', 'DEALER']),
+});
+
+const adminCreateUserSchema = z.object({
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
+  name: z.string().trim().min(2).optional(),
+});
+
+const adminTagStatusSchema = z.object({
+  status: z.enum(['AVAILABLE', 'CLAIMED', 'LOCKED', 'DAMAGED']),
+  claimedByUserId: z.string().trim().min(1).optional(),
+});
+
+const adminImportTagsSchema = z.object({
+  tags: z
+    .array(
+      z.object({
+        epc: z.string().trim().min(1),
+        status: z.enum(['AVAILABLE', 'CLAIMED', 'LOCKED', 'DAMAGED']).optional(),
+        claimedByUserId: z.string().trim().min(1).optional(),
+      }),
+    )
+    .min(1)
+    .max(500),
+});
+
 const addFarmerSchema = z.object({
   phoneNumber: z.string().regex(/^\d{8}$/),
   name: z.string().trim().min(2, 'Нэр хамгийн багадаа 2 тэмдэгт байна.'),
@@ -164,6 +206,14 @@ const HISTORY_RANGE_DAYS: Record<(typeof HISTORY_RANGES)[number], number> = {
   '6m': 180,
   '1y': 365,
 };
+
+const ADMIN_TAG_PREFIXES = [
+  { value: 'SHP', name: 'Sheep', label: 'Khoni', color: '#F4F1EA' },
+  { value: 'GOA', name: 'Goat', label: 'Yamaa', color: '#3C4A70' },
+  { value: 'EXT', name: 'External', label: 'Gadaad', color: '#E8A33D' },
+  { value: 'VET', name: 'Veterinary', label: 'Emneleg', color: '#00A29A' },
+  { value: 'COP', name: 'Coop', label: 'Horshoo', color: '#835400' },
+] as const;
 
 const deviceIngestScansSchema = z.object({
   readerId: z.string().trim().min(1),
@@ -196,6 +246,15 @@ function createOtpCode() {
 
 function createId(prefix: string) {
   return `${prefix}_${crypto.randomUUID()}`;
+}
+
+function duplicateScanWindowMs(env?: Pick<Env, 'RFID_DUPLICATE_WINDOW_SECONDS'>) {
+  const seconds = Number(env?.RFID_DUPLICATE_WINDOW_SECONDS);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return DEFAULT_DUPLICATE_SCAN_WINDOW_MS;
+  }
+
+  return Math.min(seconds, 24 * 60 * 60) * 1000;
 }
 
 function apiResponse(data: unknown, init?: ResponseInit) {
@@ -446,12 +505,7 @@ async function createSession(db: ReturnType<typeof drizzle>, env: Env, userId: s
   };
 }
 
-async function getAuthUser(request: Request, db: ReturnType<typeof drizzle>, env: Env) {
-  const authorization = request.headers.get('Authorization');
-  const token = authorization?.startsWith('Bearer ')
-    ? authorization.slice('Bearer '.length)
-    : undefined;
-
+async function getSessionAuthUser(token: string | undefined, db: ReturnType<typeof drizzle>, env: Env) {
   if (!token) {
     throw new ApiFailure(401, 'Нэвтрэх шаардлагатай.', 'UNAUTHORIZED');
   }
@@ -485,9 +539,167 @@ async function getAuthUser(request: Request, db: ReturnType<typeof drizzle>, env
   return { ...user, sessionId: payload.sid ?? null } as AuthUser;
 }
 
+async function getClerkAuthUser(token: string | undefined, db: ReturnType<typeof drizzle>, env: Env) {
+  if (!token) {
+    throw new ApiFailure(401, 'Нэвтрэх шаардлагатай.', 'UNAUTHORIZED');
+  }
+
+  if (!env.CLERK_SECRET_KEY) {
+    throw new ApiFailure(500, 'CLERK_SECRET_KEY тохируулаагүй байна.', 'CLERK_NOT_CONFIGURED');
+  }
+
+  let verified: { sub?: string };
+
+  try {
+    const authorizedParties = commaList(env.CLERK_AUTHORIZED_PARTIES);
+    verified = await verifyToken(token, {
+      secretKey: env.CLERK_SECRET_KEY,
+      jwtKey: env.CLERK_JWT_KEY,
+      ...(authorizedParties.length > 0 ? { authorizedParties } : {}),
+    });
+  } catch {
+    throw new ApiFailure(401, 'Clerk session token буруу байна.', 'INVALID_CLERK_TOKEN');
+  }
+
+  if (!verified.sub) {
+    throw new ApiFailure(401, 'Clerk session token буруу байна.', 'INVALID_CLERK_TOKEN');
+  }
+
+  const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+  const clerkUser = await clerk.users.getUser(verified.sub);
+  const email = clerkUser.emailAddresses.find((item) => item.id === clerkUser.primaryEmailAddressId)?.emailAddress
+    ?? clerkUser.emailAddresses[0]?.emailAddress;
+
+  if (!email) {
+    throw new ApiFailure(403, 'Clerk хэрэглэгч дээр email олдсонгүй.', 'CLERK_EMAIL_REQUIRED');
+  }
+
+  const normalizedEmail = email.toLowerCase();
+  const localUserByEmail = await db.select().from(users).where(eq(users.phoneNumber, normalizedEmail)).get();
+  const hasAdminAccess =
+    isAllowedAdminEmail(normalizedEmail, env)
+    || isAdminMetadata(clerkUser.publicMetadata)
+    || isAdminMetadata(clerkUser.privateMetadata)
+    || localUserByEmail?.role === 'ADMIN';
+
+  if (!hasAdminAccess) {
+    throw new ApiFailure(403, 'Энэ email admin эрхгүй байна.', 'FORBIDDEN');
+  }
+
+  const timestamp = now();
+  const userId = `clerk_${verified.sub}`;
+  const existing = localUserByEmail
+    ?? await db.select().from(users).where(eq(users.id, userId)).get();
+
+  if (existing) {
+    if (existing.status === 'SUSPENDED') {
+      throw new ApiFailure(403, 'Admin хэрэглэгч блоклогдсон байна.', 'USER_SUSPENDED');
+    }
+
+    await db
+      .update(users)
+      .set({
+        phoneNumber: normalizedEmail,
+        name: clerkUser.fullName ?? clerkUser.username ?? existing.name ?? 'Admin User',
+        imageUrl: clerkUser.imageUrl ?? existing.imageUrl,
+        role: 'ADMIN',
+        status: 'ACTIVE',
+        updatedAt: timestamp,
+      })
+      .where(eq(users.id, existing.id));
+
+    const updated = await db.select().from(users).where(eq(users.id, existing.id)).get();
+    return { ...updated!, sessionId: null } as AuthUser;
+  }
+
+  const adminUser = {
+    id: userId,
+    phoneNumber: normalizedEmail,
+    name: clerkUser.fullName ?? clerkUser.username ?? 'Admin User',
+    imageUrl: clerkUser.imageUrl ?? null,
+    role: 'ADMIN' as const,
+    aimag: null,
+    sum: null,
+    dealerId: null,
+    status: 'ACTIVE' as const,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+
+  await db.insert(users).values(adminUser);
+  return { ...adminUser, sessionId: null } as AuthUser;
+}
+
+async function getAuthUser(request: Request, db: ReturnType<typeof drizzle>, env: Env) {
+  const authorization = request.headers.get('Authorization');
+  const token = authorization?.startsWith('Bearer ')
+    ? authorization.slice('Bearer '.length)
+    : undefined;
+
+  try {
+    return await getSessionAuthUser(token, db, env);
+  } catch (error) {
+    if (!env.CLERK_SECRET_KEY) {
+      throw error;
+    }
+
+    if (error instanceof ApiFailure && error.code && !['UNAUTHORIZED', 'INVALID_TOKEN'].includes(error.code)) {
+      throw error;
+    }
+
+    return getClerkAuthUser(token, db, env);
+  }
+}
+
 function cleanOptionalText(value?: string | null) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function commaList(value?: string) {
+  return value
+    ?.split(',')
+    .map((item) => item.trim())
+    .filter(Boolean) ?? [];
+}
+
+function isAdminMetadata(metadata: ClerkMetadata | null | undefined) {
+  return metadata?.role === 'admin' || metadata?.role === 'ADMIN' || metadata?.admin === true;
+}
+
+function isAllowedAdminEmail(email: string, env: Env) {
+  const allowedEmails = commaList(env.ADMIN_EMAILS).map((item) => item.toLowerCase());
+  return allowedEmails.length > 0 && allowedEmails.includes(email.toLowerCase());
+}
+
+function requireAdmin(user: AuthUser) {
+  if (user.role !== 'ADMIN') {
+    throw new ApiFailure(403, 'Admin access required.', 'FORBIDDEN');
+  }
+}
+
+function listParams(request: Request, defaultLimit = 20, maxLimit = 100) {
+  const url = new URL(request.url);
+  const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
+  const limit = Math.min(maxLimit, Math.max(1, Number(url.searchParams.get('limit')) || defaultLimit));
+
+  return {
+    url,
+    page,
+    limit,
+    offset: (page - 1) * limit,
+    search: cleanOptionalText(url.searchParams.get('search')),
+  };
+}
+
+function paginatedResponse<T>(items: T[], total: number, page: number, limit: number) {
+  return {
+    items,
+    total,
+    page,
+    limit,
+    totalPages: Math.max(1, Math.ceil(total / limit)),
+  };
 }
 
 function normalizeEpc(epc: string) {
@@ -1710,9 +1922,10 @@ async function findRecentDuplicateScan(
   readerId: string | null,
   epc: string,
   scannedAt: string,
+  windowMs: number,
 ) {
   const cutoff = new Date(
-    new Date(scannedAt).getTime() - DUPLICATE_SCAN_WINDOW_MS,
+    new Date(scannedAt).getTime() - windowMs,
   ).toISOString();
 
   return db
@@ -1775,6 +1988,7 @@ async function ingestScanBatch(
     source?: 'APP' | 'DEVICE';
     readerId?: string;
     successMessage?: string;
+    duplicateWindowMs?: number;
   },
 ) {
   const normalizedScans = scans.map((scan) => ({
@@ -1864,6 +2078,7 @@ async function ingestScanBatch(
       scan.readerId,
       scan.epc,
       scannedAt,
+      options?.duplicateWindowMs ?? DEFAULT_DUPLICATE_SCAN_WINDOW_MS,
     );
 
     if (duplicate) {
@@ -1875,6 +2090,7 @@ async function ingestScanBatch(
           antennaId: scan.antennaId ?? duplicate.antennaId,
           scanCount: (duplicate.scanCount ?? 1) + (scan.count ?? 1),
           rawPayload: scan.rawPayload ?? duplicate.rawPayload,
+          scannedAt,
         })
         .where(eq(rfidScans.id, duplicate.id));
       scanResults.push({
@@ -1954,12 +2170,15 @@ async function handleIngestScans(
   request: Request,
   db: ReturnType<typeof drizzle>,
   userId: string,
+  env: Env,
 ) {
   const input = await parseJson(request, ingestScansSchema);
-  return ingestScanBatch(db, userId, input.scans);
+  return ingestScanBatch(db, userId, input.scans, {
+    duplicateWindowMs: duplicateScanWindowMs(env),
+  });
 }
 
-async function handleDeviceIngestScans(request: Request, db: ReturnType<typeof drizzle>) {
+async function handleDeviceIngestScans(request: Request, db: ReturnType<typeof drizzle>, env: Env) {
   const input = await parseJson(request, deviceIngestScansSchema);
   const readerId = input.readerId.trim();
   const reader = await db.select().from(rfidReaders).where(eq(rfidReaders.id, readerId)).get();
@@ -1977,6 +2196,7 @@ async function handleDeviceIngestScans(request: Request, db: ReturnType<typeof d
   return ingestScanBatch(db, reader.userId, input.scans, {
     source: 'DEVICE',
     readerId,
+    duplicateWindowMs: duplicateScanWindowMs(env),
   });
 }
 
@@ -2034,6 +2254,7 @@ async function handleHh100RfidScan(request: Request, db: ReturnType<typeof drizz
   return ingestScanBatch(db, userIds[0], scans, {
     source: 'DEVICE',
     successMessage: 'RFID scan received',
+    duplicateWindowMs: duplicateScanWindowMs(env),
   });
 }
 
@@ -2460,25 +2681,50 @@ async function handleDailyCounts(request: Request, db: ReturnType<typeof drizzle
 
 async function handleAdminStatistics(db: ReturnType<typeof drizzle>) {
   const today = new Date().toISOString().slice(0, 10);
-  const totalUsers = await db.select({ value: count() }).from(users).get();
-  const totalLivestock = await db.select({ value: count() }).from(livestock).get();
-  const missing = await db
+  const [
+    totalUsers,
+    totalLivestock,
+    missing,
+    unknownTags,
+    scannedToday,
+    totalReaders,
+    totalDealerRegistrations,
+    pendingDealerRegistrations,
+    damagedTags,
+  ] = await Promise.all([
+    db.select({ value: count() }).from(users).get(),
+    db.select({ value: count() }).from(livestock).get(),
+    db
     .select({ value: count() })
     .from(livestock)
     .where(eq(livestock.status, 'MISSING'))
-    .get();
-  const unknownTags = await db
+      .get(),
+    db
     .select({ value: count() })
     .from(livestock)
     .leftJoin(rfidTags, eq(rfidTags.livestockId, livestock.id))
     .where(isNull(rfidTags.id))
-    .get();
-  const scannedToday = await db
+      .get(),
+    db
     .select({ value: count() })
     .from(rfidScans)
     .where(like(rfidScans.scannedAt, `${today}%`))
-    .get();
-  const missingLivestock = await db
+      .get(),
+    db.select({ value: count() }).from(rfidReaders).get(),
+    db.select({ value: count() }).from(dealerRegistrations).get(),
+    db
+      .select({ value: count() })
+      .from(dealerRegistrations)
+      .where(eq(dealerRegistrations.status, 'PENDING'))
+      .get(),
+    db
+      .select({ value: count() })
+      .from(rfidTagRegistry)
+      .where(eq(rfidTagRegistry.status, 'DAMAGED'))
+      .get(),
+  ]);
+  const [missingLivestock, recentUsers] = await Promise.all([
+    db
     .select({
       id: livestock.id,
       earNumber: livestock.earNumber,
@@ -2487,8 +2733,8 @@ async function handleAdminStatistics(db: ReturnType<typeof drizzle>) {
     .from(livestock)
     .where(eq(livestock.status, 'MISSING'))
     .orderBy(livestock.earNumber)
-    .all();
-  const recentUsers = await db
+      .all(),
+    db
     .select({
       id: users.id,
       name: users.name,
@@ -2498,7 +2744,8 @@ async function handleAdminStatistics(db: ReturnType<typeof drizzle>) {
     .from(users)
     .orderBy(desc(users.createdAt))
     .limit(5)
-    .all();
+      .all(),
+  ]);
 
   return apiResponse({
     totalUsers: totalUsers?.value ?? 0,
@@ -2506,9 +2753,580 @@ async function handleAdminStatistics(db: ReturnType<typeof drizzle>) {
     scannedToday: scannedToday?.value ?? 0,
     missingCount: missing?.value ?? 0,
     unknownTagCount: unknownTags?.value ?? 0,
+    readerCount: totalReaders?.value ?? 0,
+    dealerRegistrationCount: totalDealerRegistrations?.value ?? 0,
+    pendingDealerRegistrationCount: pendingDealerRegistrations?.value ?? 0,
+    damagedTagCount: damagedTags?.value ?? 0,
     missingLivestock,
     recentUsers,
   });
+}
+
+function adminUserResponse(
+  row: typeof users.$inferSelect,
+  livestockCount: number,
+  readerCount: number,
+) {
+  return {
+    id: row.id,
+    phoneNumber: row.phoneNumber,
+    name: row.name,
+    imageUrl: row.imageUrl,
+    role: row.role,
+    aimag: row.aimag ?? undefined,
+    sum: row.sum ?? undefined,
+    dealerId: row.dealerId ?? undefined,
+    status: row.status,
+    livestockCount,
+    readerCount,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+async function handleAdminUsers(request: Request, db: ReturnType<typeof drizzle>) {
+  const { url, page, limit, offset, search } = listParams(request, 20, 100);
+  const role = url.searchParams.get('role');
+  const status = url.searchParams.get('status');
+  const aimag = cleanOptionalText(url.searchParams.get('aimag'));
+  const filters = [sql`1 = 1`];
+
+  if (search) {
+    filters.push(
+      or(
+        like(users.name, `%${search}%`),
+        like(users.phoneNumber, `%${search}%`),
+        like(users.aimag, `%${search}%`),
+        like(users.sum, `%${search}%`),
+      )!,
+    );
+  }
+  if (role && ['FARMER', 'ADMIN', 'DEALER'].includes(role)) {
+    filters.push(eq(users.role, role as 'FARMER' | 'ADMIN' | 'DEALER'));
+  }
+  if (status && ['ACTIVE', 'SUSPENDED'].includes(status)) {
+    filters.push(eq(users.status, status as 'ACTIVE' | 'SUSPENDED'));
+  }
+  if (aimag) {
+    filters.push(eq(users.aimag, aimag));
+  }
+
+  const conditions = and(...filters);
+  const [totalRow, rows] = await Promise.all([
+    db.select({ value: count() }).from(users).where(conditions).get(),
+    db
+      .select()
+      .from(users)
+      .where(conditions)
+      .orderBy(desc(users.createdAt))
+      .limit(limit)
+      .offset(offset)
+      .all(),
+  ]);
+  const counts = await Promise.all(
+    rows.map((row) =>
+      Promise.all([
+        db.select({ value: count() }).from(livestock).where(eq(livestock.userId, row.id)).get(),
+        db.select({ value: count() }).from(rfidReaders).where(eq(rfidReaders.userId, row.id)).get(),
+      ]),
+    ),
+  );
+
+  return apiResponse(
+    paginatedResponse(
+      rows.map((row, index) =>
+        adminUserResponse(row, counts[index][0]?.value ?? 0, counts[index][1]?.value ?? 0),
+      ),
+      totalRow?.value ?? 0,
+      page,
+      limit,
+    ),
+  );
+}
+
+async function handleAdminCreateUser(request: Request, db: ReturnType<typeof drizzle>) {
+  const input = await parseJson(request, adminCreateUserSchema);
+  const email = input.email;
+  const timestamp = now();
+  const existing = await db.select().from(users).where(eq(users.phoneNumber, email)).get();
+
+  if (existing) {
+    await db
+      .update(users)
+      .set({
+        name: input.name ?? existing.name,
+        role: 'ADMIN',
+        status: 'ACTIVE',
+        updatedAt: timestamp,
+      })
+      .where(eq(users.id, existing.id));
+
+    const updated = await db.select().from(users).where(eq(users.id, existing.id)).get();
+    const [livestockCount, readerCount] = await Promise.all([
+      db.select({ value: count() }).from(livestock).where(eq(livestock.userId, existing.id)).get(),
+      db.select({ value: count() }).from(rfidReaders).where(eq(rfidReaders.userId, existing.id)).get(),
+    ]);
+
+    return apiResponse(adminUserResponse(updated!, livestockCount?.value ?? 0, readerCount?.value ?? 0));
+  }
+
+  const id = createId('user');
+  await db.insert(users).values({
+    id,
+    phoneNumber: email,
+    name: input.name ?? email.split('@')[0],
+    imageUrl: null,
+    role: 'ADMIN',
+    aimag: null,
+    sum: null,
+    dealerId: null,
+    status: 'ACTIVE',
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+
+  const created = await db.select().from(users).where(eq(users.id, id)).get();
+  return apiResponse(adminUserResponse(created!, 0, 0), { status: 201 });
+}
+
+async function handleAdminUpdateUserStatus(request: Request, db: ReturnType<typeof drizzle>, userId: string) {
+  const input = await parseJson(request, adminUserStatusSchema);
+  const existing = await db.select().from(users).where(eq(users.id, userId)).get();
+
+  if (!existing) {
+    throw new ApiFailure(404, 'User not found.', 'NOT_FOUND');
+  }
+
+  await db.update(users).set({ status: input.status, updatedAt: now() }).where(eq(users.id, userId));
+  const updated = await db.select().from(users).where(eq(users.id, userId)).get();
+  const [livestockCount, readerCount] = await Promise.all([
+    db.select({ value: count() }).from(livestock).where(eq(livestock.userId, userId)).get(),
+    db.select({ value: count() }).from(rfidReaders).where(eq(rfidReaders.userId, userId)).get(),
+  ]);
+
+  return apiResponse(adminUserResponse(updated!, livestockCount?.value ?? 0, readerCount?.value ?? 0));
+}
+
+async function handleAdminUpdateUserRole(request: Request, db: ReturnType<typeof drizzle>, userId: string) {
+  const input = await parseJson(request, adminUserRoleSchema);
+  const existing = await db.select().from(users).where(eq(users.id, userId)).get();
+
+  if (!existing) {
+    throw new ApiFailure(404, 'User not found.', 'NOT_FOUND');
+  }
+
+  await db.update(users).set({ role: input.role, updatedAt: now() }).where(eq(users.id, userId));
+  const updated = await db.select().from(users).where(eq(users.id, userId)).get();
+  const [livestockCount, readerCount] = await Promise.all([
+    db.select({ value: count() }).from(livestock).where(eq(livestock.userId, userId)).get(),
+    db.select({ value: count() }).from(rfidReaders).where(eq(rfidReaders.userId, userId)).get(),
+  ]);
+
+  return apiResponse(adminUserResponse(updated!, livestockCount?.value ?? 0, readerCount?.value ?? 0));
+}
+
+async function handleAdminDealers(request: Request, db: ReturnType<typeof drizzle>) {
+  const { url, page, limit, offset, search } = listParams(request, 20, 100);
+  const status = url.searchParams.get('status');
+  const filters = [eq(users.role, 'DEALER')];
+
+  if (search) {
+    filters.push(
+      or(
+        like(users.name, `%${search}%`),
+        like(users.phoneNumber, `%${search}%`),
+        like(users.aimag, `%${search}%`),
+        like(users.sum, `%${search}%`),
+      )!,
+    );
+  }
+  if (status && ['ACTIVE', 'SUSPENDED'].includes(status)) {
+    filters.push(eq(users.status, status as 'ACTIVE' | 'SUSPENDED'));
+  }
+
+  const conditions = and(...filters);
+  const [totalRow, rows] = await Promise.all([
+    db.select({ value: count() }).from(users).where(conditions).get(),
+    db.select().from(users).where(conditions).orderBy(desc(users.createdAt)).limit(limit).offset(offset).all(),
+  ]);
+  const counts = await Promise.all(
+    rows.map(async (dealer) => {
+      const farmerCount = await db
+        .select({ value: count() })
+        .from(users)
+        .where(eq(users.dealerId, dealer.id))
+        .get();
+      const farmers = await db.select({ id: users.id }).from(users).where(eq(users.dealerId, dealer.id)).all();
+      const farmerIds = farmers.map((farmer) => farmer.id);
+      const livestockCount = farmerIds.length > 0
+        ? await db
+          .select({ value: count() })
+          .from(livestock)
+          .where(inArray(livestock.userId, farmerIds))
+          .get()
+        : null;
+
+      return {
+        farmerCount: farmerCount?.value ?? 0,
+        livestockCount: livestockCount?.value ?? 0,
+      };
+    }),
+  );
+
+  return apiResponse(
+    paginatedResponse(
+      rows.map((dealer, index) => ({
+        ...adminUserResponse(dealer, 0, 0),
+        farmerCount: counts[index].farmerCount,
+        managedLivestockCount: counts[index].livestockCount,
+      })),
+      totalRow?.value ?? 0,
+      page,
+      limit,
+    ),
+  );
+}
+
+async function handleAdminLivestock(request: Request, db: ReturnType<typeof drizzle>) {
+  const { url, page, limit, offset, search } = listParams(request, 20, 100);
+  const statusParam = url.searchParams.get('status');
+  const speciesParam = url.searchParams.get('species');
+  const aimag = cleanOptionalText(url.searchParams.get('aimag'));
+  const filters = [sql`1 = 1`];
+
+  if (search) {
+    filters.push(
+      or(
+        like(livestock.earNumber, `%${search}%`),
+        like(livestock.name, `%${search}%`),
+        like(livestock.color, `%${search}%`),
+        like(rfidTags.epc, `%${search}%`),
+        like(users.name, `%${search}%`),
+        like(users.phoneNumber, `%${search}%`),
+      )!,
+    );
+  }
+  if (statusParam && ['ACTIVE', 'MISSING', 'INACTIVE'].includes(statusParam)) {
+    filters.push(eq(livestock.status, statusParam as 'ACTIVE' | 'MISSING' | 'INACTIVE'));
+  }
+  if (speciesParam && ['SHEEP', 'GOAT'].includes(speciesParam)) {
+    filters.push(eq(livestock.species, speciesParam as 'SHEEP' | 'GOAT'));
+  }
+  if (aimag) {
+    filters.push(eq(users.aimag, aimag));
+  }
+
+  const conditions = and(...filters);
+  const [totalRow, rows] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(livestock)
+      .leftJoin(users, eq(users.id, livestock.userId))
+      .leftJoin(rfidTags, eq(rfidTags.livestockId, livestock.id))
+      .where(conditions)
+      .get(),
+    db
+      .select({ animal: livestock, owner: users, tag: rfidTags })
+      .from(livestock)
+      .leftJoin(users, eq(users.id, livestock.userId))
+      .leftJoin(rfidTags, eq(rfidTags.livestockId, livestock.id))
+      .where(conditions)
+      .orderBy(desc(livestock.createdAt))
+      .limit(limit)
+      .offset(offset)
+      .all(),
+  ]);
+  const livestockIds = rows.map((row) => row.animal.id);
+  const scans = livestockIds.length > 0
+    ? await db
+      .select({
+        scan: rfidScans,
+        readerName: rfidReaders.name,
+        readerLocation: rfidReaders.location,
+      })
+      .from(rfidScans)
+      .leftJoin(rfidReaders, eq(rfidReaders.id, rfidScans.readerId))
+      .where(inArray(rfidScans.livestockId, livestockIds))
+      .orderBy(desc(rfidScans.scannedAt))
+      .all()
+    : [];
+  const lastScanByLivestockId = new Map<string, (typeof scans)[number]>();
+
+  for (const scan of scans) {
+    if (scan.scan.livestockId && !lastScanByLivestockId.has(scan.scan.livestockId)) {
+      lastScanByLivestockId.set(scan.scan.livestockId, scan);
+    }
+  }
+
+  return apiResponse(
+    paginatedResponse(
+      rows.map((row) => {
+        const lastScan = lastScanByLivestockId.get(row.animal.id);
+        return {
+          ...livestockResponse(row.animal, row.tag, lastScan?.scan),
+          owner: row.owner
+            ? {
+              id: row.owner.id,
+              name: row.owner.name,
+              phoneNumber: row.owner.phoneNumber,
+              aimag: row.owner.aimag ?? undefined,
+              sum: row.owner.sum ?? undefined,
+              status: row.owner.status,
+            }
+            : null,
+          lastScan: lastScan
+            ? {
+              scannedAt: lastScan.scan.scannedAt,
+              direction: lastScan.scan.direction,
+              readerId: lastScan.scan.readerId,
+              readerName: lastScan.readerName ?? undefined,
+              readerLocation: lastScan.readerLocation ?? undefined,
+              rssi: lastScan.scan.rssi ?? undefined,
+              antennaId: lastScan.scan.antennaId ?? undefined,
+            }
+            : null,
+        };
+      }),
+      totalRow?.value ?? 0,
+      page,
+      limit,
+    ),
+  );
+}
+
+function readerStatus(lastScanAt?: string | null, rssi?: number | null) {
+  if (!lastScanAt) {
+    return 'OFFLINE' as const;
+  }
+
+  const ageMs = Date.now() - new Date(lastScanAt).getTime();
+
+  if (ageMs <= 15 * 60_000 && (rssi == null || rssi >= -75)) {
+    return 'ONLINE' as const;
+  }
+
+  if (ageMs <= 6 * 60 * 60_000) {
+    return 'WARNING' as const;
+  }
+
+  return 'OFFLINE' as const;
+}
+
+async function handleAdminDevices(request: Request, db: ReturnType<typeof drizzle>) {
+  const { page, limit, offset, search } = listParams(request, 20, 100);
+  const filters = [sql`1 = 1`];
+
+  if (search) {
+    filters.push(
+      or(
+        like(rfidReaders.id, `%${search}%`),
+        like(rfidReaders.name, `%${search}%`),
+        like(rfidReaders.location, `%${search}%`),
+        like(users.name, `%${search}%`),
+        like(users.phoneNumber, `%${search}%`),
+      )!,
+    );
+  }
+
+  const conditions = and(...filters);
+  const [totalRow, rows] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(rfidReaders)
+      .leftJoin(users, eq(users.id, rfidReaders.userId))
+      .where(conditions)
+      .get(),
+    db
+      .select({ reader: rfidReaders, owner: users })
+      .from(rfidReaders)
+      .leftJoin(users, eq(users.id, rfidReaders.userId))
+      .where(conditions)
+      .orderBy(desc(rfidReaders.updatedAt))
+      .limit(limit)
+      .offset(offset)
+      .all(),
+  ]);
+  const readerIds = rows.map((row) => row.reader.id);
+  const scans = readerIds.length > 0
+    ? await db
+      .select()
+      .from(rfidScans)
+      .where(inArray(rfidScans.readerId, readerIds))
+      .orderBy(desc(rfidScans.scannedAt))
+      .all()
+    : [];
+  const lastScanByReaderId = new Map<string, (typeof scans)[number]>();
+  const scanCountByReaderId = new Map<string, number>();
+
+  for (const scan of scans) {
+    if (!scan.readerId) continue;
+    scanCountByReaderId.set(scan.readerId, (scanCountByReaderId.get(scan.readerId) ?? 0) + 1);
+    if (!lastScanByReaderId.has(scan.readerId)) {
+      lastScanByReaderId.set(scan.readerId, scan);
+    }
+  }
+
+  return apiResponse(
+    paginatedResponse(
+      rows.map((row) => {
+        const lastScan = lastScanByReaderId.get(row.reader.id);
+        const status = readerStatus(lastScan?.scannedAt, lastScan?.rssi);
+
+        return {
+          id: row.reader.id,
+          name: row.reader.name,
+          location: row.reader.location ?? undefined,
+          deviceSecretSet: !!row.reader.deviceSecretHash,
+          owner: row.owner
+            ? {
+              id: row.owner.id,
+              name: row.owner.name,
+              phoneNumber: row.owner.phoneNumber,
+              aimag: row.owner.aimag ?? undefined,
+              sum: row.owner.sum ?? undefined,
+            }
+            : null,
+          status,
+          lastScanAt: lastScan?.scannedAt,
+          lastDirection: lastScan?.direction,
+          lastEpc: lastScan?.epc,
+          rssi: lastScan?.rssi ?? undefined,
+          antennaId: lastScan?.antennaId ?? undefined,
+          scanCount: scanCountByReaderId.get(row.reader.id) ?? 0,
+          offlineQueue: status === 'OFFLINE' ? (scanCountByReaderId.get(row.reader.id) ?? 0) : 0,
+          createdAt: row.reader.createdAt,
+          updatedAt: row.reader.updatedAt,
+        };
+      }),
+      totalRow?.value ?? 0,
+      page,
+      limit,
+    ),
+  );
+}
+
+async function handleAdminTagSettings() {
+  return apiResponse({
+    prefixes: ADMIN_TAG_PREFIXES,
+  });
+}
+
+async function handleAdminImportTags(request: Request, db: ReturnType<typeof drizzle>) {
+  const input = await parseJson(request, adminImportTagsSchema);
+  const timestamp = now();
+  let imported = 0;
+
+  for (const tag of input.tags) {
+    const epc = normalizeEpc(tag.epc);
+    const status = tag.status ?? 'AVAILABLE';
+    const claimedByUserId = status === 'CLAIMED' || status === 'LOCKED' ? tag.claimedByUserId ?? null : null;
+
+    await db
+      .insert(rfidTagRegistry)
+      .values({
+        epc,
+        status,
+        claimedByUserId,
+        claimedAt: claimedByUserId ? timestamp : null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .onConflictDoUpdate({
+        target: rfidTagRegistry.epc,
+        set: {
+          status,
+          claimedByUserId,
+          claimedAt: claimedByUserId ? timestamp : null,
+          updatedAt: timestamp,
+        },
+      });
+    imported += 1;
+  }
+
+  return apiResponse({ imported });
+}
+
+async function handleAdminUpdateTagStatus(request: Request, db: ReturnType<typeof drizzle>, rawEpc: string) {
+  const input = await parseJson(request, adminTagStatusSchema);
+  const epc = normalizeEpc(rawEpc);
+  const existing = await findRegistryTag(db, epc);
+  const timestamp = now();
+  const claimedByUserId = input.status === 'CLAIMED' || input.status === 'LOCKED'
+    ? input.claimedByUserId ?? existing?.claimedByUserId ?? null
+    : null;
+  const claimedAt = claimedByUserId ? existing?.claimedAt ?? timestamp : null;
+
+  if (existing) {
+    await db
+      .update(rfidTagRegistry)
+      .set({
+        status: input.status,
+        claimedByUserId,
+        claimedAt,
+        updatedAt: timestamp,
+      })
+      .where(eq(rfidTagRegistry.epc, existing.epc));
+  } else {
+    await db.insert(rfidTagRegistry).values({
+      epc,
+      status: input.status,
+      claimedByUserId,
+      claimedAt,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+  }
+
+  const updated = await findRegistryTag(db, epc);
+  return apiResponse(tagRegistryResponse(updated!));
+}
+
+async function handleAdminActivity(db: ReturnType<typeof drizzle>) {
+  const [recentScans, recentRegistrations, recentUsers] = await Promise.all([
+    db
+      .select({
+        id: rfidScans.id,
+        epc: rfidScans.epc,
+        scannedAt: rfidScans.scannedAt,
+        readerId: rfidScans.readerId,
+        ownerName: users.name,
+      })
+      .from(rfidScans)
+      .leftJoin(users, eq(users.id, rfidScans.userId))
+      .orderBy(desc(rfidScans.scannedAt))
+      .limit(5)
+      .all(),
+    db.select().from(dealerRegistrations).orderBy(desc(dealerRegistrations.createdAt)).limit(5).all(),
+    db.select().from(users).orderBy(desc(users.createdAt)).limit(5).all(),
+  ]);
+  const activity = [
+    ...recentScans.map((scan) => ({
+      id: scan.id,
+      type: 'SCAN',
+      title: `${scan.epc} scanned`,
+      description: scan.readerId ? `Reader: ${scan.readerId}` : 'No reader linked',
+      actor: scan.ownerName ?? undefined,
+      createdAt: scan.scannedAt,
+    })),
+    ...recentRegistrations.map((registration) => ({
+      id: registration.id,
+      type: 'DEALER_REGISTRATION',
+      title: `${registration.orgName} requested access`,
+      description: registration.prefixRequested,
+      actor: registration.contact,
+      createdAt: registration.createdAt,
+    })),
+    ...recentUsers.map((row) => ({
+      id: row.id,
+      type: 'USER',
+      title: row.name ? `${row.name} joined` : `${row.phoneNumber} joined`,
+      description: row.role,
+      actor: row.phoneNumber,
+      createdAt: row.createdAt,
+    })),
+  ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 15);
+
+  return apiResponse(activity);
 }
 
 async function handlePushToken(request: Request, db: ReturnType<typeof drizzle>, userId: string) {
@@ -2623,8 +3441,34 @@ async function handleGetTag(db: ReturnType<typeof drizzle>, rawEpc: string) {
 }
 
 async function handleListTags(db: ReturnType<typeof drizzle>) {
-  const rows = await db.select().from(rfidTagRegistry).orderBy(desc(rfidTagRegistry.updatedAt)).all();
-  return apiResponse(rows.map(tagRegistryResponse));
+  const [registryRows, claimedRows] = await Promise.all([
+    db.select().from(rfidTagRegistry).orderBy(desc(rfidTagRegistry.updatedAt)).all(),
+    db
+      .select({
+        epc: rfidTags.epc,
+        claimedByUserId: rfidTags.userId,
+        claimedAt: rfidTags.createdAt,
+        updatedAt: rfidTags.updatedAt,
+      })
+      .from(rfidTags)
+      .orderBy(desc(rfidTags.updatedAt))
+      .all(),
+  ]);
+  const byEpc = new Map(registryRows.map((row) => [normalizeEpc(row.epc), tagRegistryResponse(row)]));
+
+  for (const row of claimedRows) {
+    const epc = normalizeEpc(row.epc);
+    if (!byEpc.has(epc)) {
+      byEpc.set(epc, {
+        epc,
+        status: 'CLAIMED' as const,
+        claimedByUserId: row.claimedByUserId,
+        claimedAt: row.claimedAt,
+      });
+    }
+  }
+
+  return apiResponse([...byEpc.values()]);
 }
 
 async function handleUnlockTag(db: ReturnType<typeof drizzle>, rawEpc: string) {
@@ -2926,7 +3770,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
   }
 
   if (request.method === 'POST' && path === '/api/devices/scans') {
-    return handleDeviceIngestScans(request, db);
+    return handleDeviceIngestScans(request, db, env);
   }
 
   if (request.method === 'POST' && path === '/api/rfid/scan') {
@@ -2973,6 +3817,46 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
     }
 
     return handleAdminStatistics(db);
+  }
+
+  if (request.method === 'GET' && path === '/api/admin/users') {
+    requireAdmin(user);
+    return handleAdminUsers(request, db);
+  }
+
+  if (request.method === 'POST' && path === '/api/admin/users') {
+    requireAdmin(user);
+    return handleAdminCreateUser(request, db);
+  }
+
+  if (request.method === 'GET' && path === '/api/admin/dealers') {
+    requireAdmin(user);
+    return handleAdminDealers(request, db);
+  }
+
+  if (request.method === 'GET' && path === '/api/admin/livestock') {
+    requireAdmin(user);
+    return handleAdminLivestock(request, db);
+  }
+
+  if (request.method === 'GET' && path === '/api/admin/devices') {
+    requireAdmin(user);
+    return handleAdminDevices(request, db);
+  }
+
+  if (request.method === 'GET' && path === '/api/admin/tag-settings') {
+    requireAdmin(user);
+    return handleAdminTagSettings();
+  }
+
+  if (request.method === 'GET' && path === '/api/admin/activity') {
+    requireAdmin(user);
+    return handleAdminActivity(db);
+  }
+
+  if (request.method === 'POST' && path === '/api/admin/tags/import') {
+    requireAdmin(user);
+    return handleAdminImportTags(request, db);
   }
 
   if (request.method === 'GET' && path === '/api/admin/tags') {
@@ -3036,7 +3920,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
   }
 
   if (request.method === 'POST' && path === '/api/scans') {
-    return handleIngestScans(request, db, user.id);
+    return handleIngestScans(request, db, user.id, env);
   }
 
   if (request.method === 'GET' && path === '/api/scans') {
@@ -3085,6 +3969,27 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
 
   if (alertReadMatch && request.method === 'PATCH') {
     return handleReadAlert(db, user.id, alertReadMatch[1]);
+  }
+
+  const adminUserStatusMatch = path.match(/^\/api\/admin\/users\/([^/]+)\/status$/);
+
+  if (adminUserStatusMatch && request.method === 'PATCH') {
+    requireAdmin(user);
+    return handleAdminUpdateUserStatus(request, db, adminUserStatusMatch[1]);
+  }
+
+  const adminUserRoleMatch = path.match(/^\/api\/admin\/users\/([^/]+)\/role$/);
+
+  if (adminUserRoleMatch && request.method === 'PATCH') {
+    requireAdmin(user);
+    return handleAdminUpdateUserRole(request, db, adminUserRoleMatch[1]);
+  }
+
+  const adminTagStatusMatch = path.match(/^\/api\/admin\/tags\/([^/]+)\/status$/);
+
+  if (adminTagStatusMatch && request.method === 'PATCH') {
+    requireAdmin(user);
+    return handleAdminUpdateTagStatus(request, db, decodeURIComponent(adminTagStatusMatch[1]));
   }
 
   const tagUnlockMatch = path.match(/^\/api\/admin\/tags\/([^/]+)\/unlock$/);
