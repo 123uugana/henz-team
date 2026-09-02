@@ -6,10 +6,9 @@ account_id = "4f092751ca31d58d93a619ad88dc4a2e"
 workers_dev = true
 
 [vars]
-OTP_CODE = "123456"
 RFID_DUPLICATE_WINDOW_SECONDS = "300"
 ADMIN_EMAILS = "uuganbayrxx0716@gmail.com"
-CLERK_AUTHORIZED_PARTIES = "http://localhost:3000"
+CLERK_AUTHORIZED_PARTIES = "http://localhost:3000,https://henzhurag-123uuganas-projects.vercel.app,https://henzhurag-hki5y06dx-123uuganas-projects.vercel.app"
 
 [dev]
 ip = "0.0.0.0"
