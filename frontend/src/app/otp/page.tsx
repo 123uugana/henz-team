@@ -26,7 +26,9 @@ export default function OtpVerificationPage() {
 
 function OtpVerificationForm() {
   const router = useRouter();
-  const phone = useSearchParams().get("phone") ?? "";
+  const searchParams = useSearchParams();
+  const phone = searchParams.get("phone") ?? "";
+  const devCode = searchParams.get("code");
 
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
@@ -77,7 +79,11 @@ function OtpVerificationForm() {
     setError(null);
 
     try {
-      await sendOtp(phone);
+      const result = await sendOtp(phone);
+      if (result.code) {
+        const query = new URLSearchParams({ phone, code: result.code });
+        router.replace(`/otp?${query.toString()}`);
+      }
       setResendSeconds(RESEND_COOLDOWN_SECONDS);
     } catch (err) {
       setError(
@@ -122,6 +128,19 @@ function OtpVerificationForm() {
 
       {error ? (
         <p className="mt-4 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
+      ) : null}
+
+      {devCode ? (
+        <button
+          type="button"
+          onClick={() => {
+            setCode(devCode);
+            handleVerify(devCode);
+          }}
+          className="mt-4 text-center text-sm font-medium text-[#b96514] dark:text-[#f2a93c]"
+        >
+          Туршилтын код: {devCode}
+        </button>
       ) : null}
 
       <button

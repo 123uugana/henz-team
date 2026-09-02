@@ -22,7 +22,9 @@ import {
   claimTag,
   createLivestock,
   getTag,
+  listScans,
   uploadImage,
+  type RecentScan,
   type Species,
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
@@ -41,15 +43,48 @@ const GENDERS = [
 ] as const;
 
 function detectSpeciesFromTag(code: string): Species | null {
-  const prefix = code.trim().charAt(0).toUpperCase();
+  const readable = decodeHexAsciiEpc(code) ?? code;
+  const prefix = readable.trim().charAt(0).toUpperCase();
   if (prefix === "H") return "SHEEP";
   if (prefix === "Y") return "GOAT";
   return null;
 }
 
+function decodeHexAsciiEpc(code: string): string | null {
+  const compact = code.trim().replace(/[\s:-]/g, "");
+  if (
+    compact.length < 2 ||
+    compact.length % 2 !== 0 ||
+    !/^[0-9A-Fa-f]+$/.test(compact)
+  ) {
+    return null;
+  }
+
+  let decoded = "";
+  for (let index = 0; index < compact.length; index += 2) {
+    const value = Number.parseInt(compact.slice(index, index + 2), 16);
+    if (value < 32 || value > 126) return null;
+    decoded += String.fromCharCode(value);
+  }
+
+  return decoded || null;
+}
+
 function normalizeTagEpc(code: string): string {
-  const normalized = code.trim().toUpperCase();
+  const normalized = code.trim().replace(/\s+/g, "").toUpperCase();
+  if (/^[0-9A-F]+$/.test(normalized) && normalized.length % 2 === 0) {
+    return normalized;
+  }
   return normalized.replace(/^([HY])-?/, "$1-");
+}
+
+function getReadableTagCode(epc: string): string {
+  return decodeHexAsciiEpc(epc) ?? epc;
+}
+
+function isFreshScan(scan: RecentScan): boolean {
+  const scannedAt = new Date(scan.scannedAt).getTime();
+  return Number.isFinite(scannedAt) && Date.now() - scannedAt < 2 * 60 * 1000;
 }
 
 export default function RegisterAnimalPage() {
@@ -66,9 +101,51 @@ export default function RegisterAnimalPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [latestScan, setLatestScan] = useState<RecentScan | null>(null);
+  const [scanPollError, setScanPollError] = useState<string | null>(null);
+  const tagCodeRef = useRef("");
 
   const species = detectSpeciesFromTag(tagCode);
   const epc = tagCode.trim() ? normalizeTagEpc(tagCode) : "";
+  const readableEpc = epc ? getReadableTagCode(epc) : "";
+
+  useEffect(() => {
+    tagCodeRef.current = tagCode;
+  }, [tagCode]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshLatestScan = async () => {
+      try {
+        const scans = await listScans();
+        if (cancelled) return;
+
+        const scan = scans[0] ?? null;
+        setLatestScan(scan);
+        setScanPollError(null);
+
+        if (scan && isFreshScan(scan) && !tagCodeRef.current.trim()) {
+          const normalized = normalizeTagEpc(scan.epc);
+          tagCodeRef.current = normalized;
+          setTagCode(normalized);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setScanPollError(
+          err instanceof ApiError ? err.message : "RFID уншилтыг авч чадсангүй.",
+        );
+      }
+    };
+
+    void refreshLatestScan();
+    const intervalId = window.setInterval(refreshLatestScan, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   const [tagBlocked, setTagBlocked] = useState(false);
   useEffect(() => {
@@ -122,7 +199,7 @@ export default function RegisterAnimalPage() {
       }
 
       const animal = await createLivestock({
-        earNumber: epc,
+        earNumber: readableEpc || epc,
         name: nickname.trim() || undefined,
         species,
         gender: gender ?? "UNKNOWN",
@@ -166,6 +243,60 @@ export default function RegisterAnimalPage() {
           />
         </div>
 
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-white/10 dark:bg-[#161c2c]">
+          <div className="flex items-center justify-between gap-3">
+            <span className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-gray-300">
+              <ScanLine className="size-4 text-[#a85b0a] dark:text-[#f2a93c]" />
+              RFID live
+            </span>
+            <span className="text-[11px] text-slate-500 dark:text-gray-400">
+              {latestScan
+                ? new Date(latestScan.scannedAt).toLocaleTimeString("mn-MN", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })
+                : "waiting..."}
+            </span>
+          </div>
+
+          {latestScan ? (
+            <div className="mt-3 flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="break-all font-mono text-sm font-semibold text-slate-900 dark:text-white">
+                  {getReadableTagCode(latestScan.epc)}
+                </p>
+                {getReadableTagCode(latestScan.epc) !== latestScan.epc ? (
+                  <p className="mt-0.5 break-all font-mono text-[11px] text-slate-500 dark:text-gray-400">
+                    {latestScan.epc}
+                  </p>
+                ) : null}
+                <p className="mt-1 text-[11px] text-slate-500 dark:text-gray-400">
+                  {latestScan.reader?.name ?? latestScan.reader?.id ?? "HH100"}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setTagCode(normalizeTagEpc(latestScan.epc))}
+              >
+                Авах
+              </Button>
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-slate-500 dark:text-gray-400">
+              HH100 дээр tag уншуулахад энд гарч ирнэ.
+            </p>
+          )}
+
+          {scanPollError ? (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+              {scanPollError}
+            </p>
+          ) : null}
+        </div>
+
         {tagCode.trim().length === 0 ? (
           <p className="text-xs text-slate-500 dark:text-gray-400">
             Шошгыг уншуулахад малын төрөл автоматаар танигдана.
@@ -191,7 +322,7 @@ export default function RegisterAnimalPage() {
               return <Icon className="size-4 text-emerald-700 dark:text-emerald-400" />;
             })()}
             <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
-              {SPECIES_INFO[species].label} — автоматаар танигдлаа ({epc})
+              {SPECIES_INFO[species].label} — автоматаар танигдлаа ({readableEpc})
             </span>
             <CheckCircle2 className="ml-auto size-4 text-emerald-700 dark:text-emerald-400" />
           </div>

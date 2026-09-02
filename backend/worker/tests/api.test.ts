@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
-import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { applyD1Migrations, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import type { D1Migration } from '@cloudflare/vitest-pool-workers';
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
@@ -7,7 +8,9 @@ import worker from '../src/index';
 import { rfidScans, users } from '../src/db/schema';
 
 type WorkerEnv = Parameters<typeof worker.fetch>[1];
-const testEnv = env as unknown as WorkerEnv;
+const testEnv = env as unknown as WorkerEnv & { TEST_MIGRATIONS: D1Migration[] };
+
+await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
 
 async function makeDealer(userId: string) {
   const db = drizzle(testEnv.DB);
@@ -637,6 +640,56 @@ describe('rfid device integration', () => {
     });
   });
 
+  it('keeps repeated reader reads as one rolling duplicate scan', async () => {
+    const tokens = await registerAndLogin('99398888');
+    const auth = tokens.accessToken;
+    const db = drizzle(testEnv.DB);
+    const readerId = 'hh100-dedupe-chain';
+    const epc = 'E280-DEDUPE-CHAIN';
+
+    await api(
+      '/api/devices/readers',
+      json(
+        'POST',
+        { id: readerId, name: 'Dedupe Reader', deviceSecret: 'dedupe-secret' },
+        auth,
+      ),
+    );
+    await api(
+      '/api/livestock',
+      json('POST', { earNumber: 'DED-1', species: 'SHEEP', gender: 'FEMALE', rfidEpc: epc }, auth),
+    );
+
+    const ingest = await api(
+      '/api/devices/scans',
+      json('POST', {
+        readerId,
+        secret: 'dedupe-secret',
+        scans: [
+          { epc, scannedAt: '2026-08-26T00:00:00.000Z' },
+          { epc, scannedAt: '2026-08-26T00:00:20.000Z' },
+          { epc, scannedAt: '2026-08-26T00:00:45.000Z' },
+        ],
+      }),
+    );
+
+    expect(ingest.status).toBe(200);
+    expect(ingest.body.data).toMatchObject({
+      accepted: 3,
+      inserted: 1,
+      duplicates: 2,
+      known: 1,
+    });
+
+    const rows = await db.select().from(rfidScans).where(eq(rfidScans.epc, epc)).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      readerId,
+      scanCount: 3,
+      scannedAt: '2026-08-26T00:00:45.000Z',
+    });
+  });
+
   it('accepts raw HH100 scan payloads and stores parsed metadata', async () => {
     const tokens = await registerAndLogin('99397766');
     const auth = tokens.accessToken;
@@ -914,6 +967,187 @@ describe('admin', () => {
       json('PATCH', { status: 'APPROVED' }, auth),
     );
     expect(decide.status).toBe(403);
+  });
+
+  it('rejects non-admins from system-wide admin list endpoints', async () => {
+    const tokens = await registerAndLogin('99440011');
+    const auth = tokens.accessToken;
+
+    for (const endpoint of [
+      '/api/admin/users',
+      '/api/admin/dealers',
+      '/api/admin/livestock',
+      '/api/admin/devices',
+      '/api/admin/tag-settings',
+      '/api/admin/activity',
+    ]) {
+      const res = await api(endpoint, authorized(auth));
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('FORBIDDEN');
+    }
+  });
+
+  it('lists admin users, dealers, livestock, devices and activity', async () => {
+    const farmer = await registerAndLogin('99440022');
+    const farmerAuth = farmer.accessToken;
+
+    const createdLivestock = await api(
+      '/api/livestock',
+      json(
+        'POST',
+        {
+          earNumber: 'ADMIN-L-1',
+          species: 'SHEEP',
+          gender: 'FEMALE',
+          name: 'Admin sheep',
+          rfidEpc: 'ADMIN-TAG-1',
+        },
+        farmerAuth,
+      ),
+    );
+    expect(createdLivestock.status).toBe(200);
+
+    const reader = await api(
+      '/api/devices/readers',
+      json(
+        'POST',
+        { id: 'admin-reader-01', name: 'Admin Reader 01', location: 'Gate A' },
+        farmerAuth,
+      ),
+    );
+    expect(reader.status).toBe(200);
+
+    const scan = await api(
+      '/api/scans',
+      json(
+        'POST',
+        { scans: [{ epc: 'ADMIN-TAG-1', readerId: 'admin-reader-01', rssi: -42 }] },
+        farmerAuth,
+      ),
+    );
+    expect(scan.status).toBe(200);
+
+    const dealer = await registerAndLogin('99440033');
+    await makeDealer(dealer.user.id);
+
+    const admin = await registerAndLogin('99440044');
+    await makeAdmin(admin.user.id);
+    const adminAuth = admin.accessToken;
+
+    const usersList = await api('/api/admin/users?search=99440022', authorized(adminAuth));
+    expect(usersList.status).toBe(200);
+    expect(usersList.body.data.items).toHaveLength(1);
+    expect(usersList.body.data.items[0]).toMatchObject({
+      phoneNumber: '99440022',
+      livestockCount: 1,
+      readerCount: 1,
+    });
+
+    const dealers = await api('/api/admin/dealers?search=99440033', authorized(adminAuth));
+    expect(dealers.status).toBe(200);
+    expect(dealers.body.data.items).toHaveLength(1);
+    expect(dealers.body.data.items[0].role).toBe('DEALER');
+
+    const livestockList = await api('/api/admin/livestock?search=ADMIN-L-1', authorized(adminAuth));
+    expect(livestockList.status).toBe(200);
+    expect(livestockList.body.data.items).toHaveLength(1);
+    expect(livestockList.body.data.items[0].owner.phoneNumber).toBe('99440022');
+    expect(livestockList.body.data.items[0].lastScan.readerId).toBe('admin-reader-01');
+
+    const devices = await api('/api/admin/devices?search=admin-reader-01', authorized(adminAuth));
+    expect(devices.status).toBe(200);
+    expect(devices.body.data.items).toHaveLength(1);
+    expect(devices.body.data.items[0]).toMatchObject({
+      id: 'admin-reader-01',
+      owner: { phoneNumber: '99440022' },
+      lastEpc: 'ADMIN-TAG-1',
+    });
+
+    const activity = await api('/api/admin/activity', authorized(adminAuth));
+    expect(activity.status).toBe(200);
+    expect(Array.isArray(activity.body.data)).toBe(true);
+
+    const settings = await api('/api/admin/tag-settings', authorized(adminAuth));
+    expect(settings.status).toBe(200);
+    expect(settings.body.data.prefixes.some((prefix: any) => prefix.value === 'SHP')).toBe(true);
+  });
+
+  it('imports tags and lets admins update tag state', async () => {
+    const admin = await registerAndLogin('99440055');
+    await makeAdmin(admin.user.id);
+    const auth = admin.accessToken;
+
+    const imported = await api(
+      '/api/admin/tags/import',
+      json(
+        'POST',
+        {
+          tags: [
+            { epc: 'admin-import-1' },
+            { epc: 'admin-import-2', status: 'DAMAGED' },
+          ],
+        },
+        auth,
+      ),
+    );
+    expect(imported.status).toBe(200);
+    expect(imported.body.data.imported).toBe(2);
+
+    const damaged = await api('/api/rfid/tags/ADMIN-IMPORT-2', authorized(auth));
+    expect(damaged.body.data.status).toBe('DAMAGED');
+
+    const updated = await api(
+      '/api/admin/tags/admin-import-1/status',
+      json('PATCH', { status: 'DAMAGED' }, auth),
+    );
+    expect(updated.status).toBe(200);
+    expect(updated.body.data).toMatchObject({
+      epc: 'ADMIN-IMPORT-1',
+      status: 'DAMAGED',
+    });
+  });
+
+  it('lets admins suspend users and change roles', async () => {
+    const target = await registerAndLogin('99440066');
+    const admin = await registerAndLogin('99440077');
+    await makeAdmin(admin.user.id);
+
+    const suspended = await api(
+      `/api/admin/users/${target.user.id}/status`,
+      json('PATCH', { status: 'SUSPENDED' }, admin.accessToken),
+    );
+    expect(suspended.status).toBe(200);
+    expect(suspended.body.data.status).toBe('SUSPENDED');
+
+    const promoted = await api(
+      `/api/admin/users/${target.user.id}/role`,
+      json('PATCH', { role: 'DEALER' }, admin.accessToken),
+    );
+    expect(promoted.status).toBe(200);
+    expect(promoted.body.data.role).toBe('DEALER');
+  });
+
+  it('lets admins create email-based admin users', async () => {
+    const admin = await registerAndLogin('99440111');
+    await makeAdmin(admin.user.id);
+
+    const created = await api(
+      '/api/admin/users',
+      json('POST', { email: 'new-admin@example.com', name: 'New Admin' }, admin.accessToken),
+    );
+
+    expect(created.status).toBe(201);
+    expect(created.body.data).toMatchObject({
+      phoneNumber: 'new-admin@example.com',
+      name: 'New Admin',
+      role: 'ADMIN',
+      status: 'ACTIVE',
+    });
+
+    const listed = await api('/api/admin/users?search=new-admin@example.com', authorized(admin.accessToken));
+    expect(listed.status).toBe(200);
+    expect(listed.body.data.items).toHaveLength(1);
+    expect(listed.body.data.items[0].role).toBe('ADMIN');
   });
 });
 

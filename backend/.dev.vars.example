@@ -1,0 +1,12 @@
+ACCESS_TOKEN_SECRET=replace-with-at-least-32-characters
+OTP_CODE=123456
+EXPOSE_OTP=true
+SMS_PROVIDER=log
+RFID_DEVICE_KEY=replace-with-device-key
+RFID_DUPLICATE_WINDOW_SECONDS=300
+
+# Clerk admin email auth
+CLERK_SECRET_KEY=sk_test_xxx
+CLERK_JWT_KEY=
+ADMIN_EMAILS=admin@example.com
+CLERK_AUTHORIZED_PARTIES=http://localhost:3000

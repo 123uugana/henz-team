@@ -25,9 +25,13 @@ export default function PhoneEntryPage() {
     setError(null);
     console.log("OTP ");
     try {
-      await sendOtp(phone);
+      const result = await sendOtp(phone);
       console.log("OTP sent successfully" + phone);
-      router.push(`/otp?phone=${phone}`);
+      const query = new URLSearchParams({ phone });
+      if (result.code) {
+        query.set("code", result.code);
+      }
+      router.push(`/otp?${query.toString()}`);
     } catch (err) {
       setError(
         err instanceof ApiError

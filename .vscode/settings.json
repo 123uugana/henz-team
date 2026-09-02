@@ -1,0 +1,37 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}\\backend\\tools\\rfid_bridge\\.venv\\Scripts\\python.exe",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}\\backend\\tools\\rfid_bridge\\.venv\\Lib\\site-packages"
+  ],
+  "files.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/.next-*": true,
+    "**/.wrangler": true,
+    "**/.venv": true,
+    "**/downloads": true,
+    "**/*.tsbuildinfo": true
+  },
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.next/**": true,
+    "**/.next-*/**": true,
+    "**/.wrangler/**": true,
+    "**/.venv/**": true,
+    "**/downloads/**": true,
+    "**/*.tsbuildinfo": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/.next-*": true,
+    "**/.wrangler": true,
+    "**/.venv": true,
+    "**/downloads": true,
+    "**/*.tsbuildinfo": true
+  },
+  "css.lint.unknownAtRules": "ignore",
+  "scss.lint.unknownAtRules": "ignore",
+  "less.lint.unknownAtRules": "ignore",
+  "tailwindCSS.experimental.configFile": "frontend/src/app/globals.css"
+}

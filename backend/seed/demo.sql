@@ -8,6 +8,7 @@ DELETE FROM rfid_tags WHERE id LIKE 'tag-demo-%';
 DELETE FROM rfid_readers WHERE id IN ('hh100-gate-01', 'hl7202k8-handheld-01');
 DELETE FROM livestock WHERE id LIKE 'livestock-demo-%';
 DELETE FROM users WHERE id = 'user_demo_1';
+DELETE FROM users WHERE id = 'admin_demo_1';
 
 INSERT INTO users (
   id,
@@ -26,6 +27,28 @@ INSERT INTO users (
   'FARMER',
   'Хэнтий',
   'Өндөрхаан',
+  'ACTIVE',
+  date('now') || 'T00:00:00.000Z',
+  date('now') || 'T00:00:00.000Z'
+);
+
+INSERT INTO users (
+  id,
+  phone_number,
+  name,
+  role,
+  aimag,
+  sum,
+  status,
+  created_at,
+  updated_at
+) VALUES (
+  'admin_demo_1',
+  '99001122',
+  'Admin User',
+  'ADMIN',
+  'Улаанбаатар',
+  'СБД',
   'ACTIVE',
   date('now') || 'T00:00:00.000Z',
   date('now') || 'T00:00:00.000Z'

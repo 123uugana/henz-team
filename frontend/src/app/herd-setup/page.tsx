@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { Plus, PawPrint } from "lucide-react";
+import { Plus } from "lucide-react";
+import { BrandLogo } from "@/components/brand-logo";
 import { PhoneFrame } from "@/components/phone-frame";
 import { Button } from "@/components/ui/button";
 
@@ -8,15 +9,7 @@ export default function HerdSetupIntroPage() {
     <PhoneFrame showThemeToggle className="items-center justify-between">
       <div className="relative mt-4 flex size-56 items-center justify-center rounded-full bg-white dark:bg-[#141a2c] ring-1 ring-[#f2a93c]/20">
         <div className="absolute inset-6 rounded-full bg-[#f2a93c]/10 blur-2xl" />
-        <div className="grid grid-cols-4 gap-3 opacity-90">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <PawPrint
-              key={i}
-              className="size-4 text-[#a85b0a] dark:text-[#f2a93c]"
-              strokeWidth={1.5}
-            />
-          ))}
-        </div>
+        <BrandLogo className="relative size-36 rounded-full" withRing />
       </div>
 
       <div className="flex flex-col items-center gap-2 text-center">

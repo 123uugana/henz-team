@@ -2,6 +2,25 @@ import { clearSession, getSession, saveSession } from "@/lib/session";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8787";
 
+type AuthTokenResolver = () => Promise<string | null>;
+
+let authTokenResolver: AuthTokenResolver | null = null;
+
+declare global {
+  interface Window {
+    Clerk?: {
+      session?: {
+        getToken: () => Promise<string | null>;
+      };
+      signOut?: (options?: { redirectUrl?: string }) => Promise<void>;
+    };
+  }
+}
+
+export function setAuthTokenResolver(resolver: AuthTokenResolver | null) {
+  authTokenResolver = resolver;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -83,22 +102,28 @@ async function authorizedFetch<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
+  const clerkToken = await getClerkToken();
+  const preferClerkToken = path.startsWith("/api/admin");
   const session = getSession();
 
-  if (!session) {
+  if (!session && !clerkToken) {
     throw new ApiError(401, "Нэвтрэх шаардлагатай.", "UNAUTHORIZED");
   }
+
+  const accessToken = preferClerkToken
+    ? clerkToken ?? session?.accessToken
+    : session?.accessToken ?? clerkToken;
 
   try {
     return await apiFetch<T>(path, {
       ...init,
       headers: {
-        Authorization: `Bearer ${session.accessToken}`,
+        Authorization: `Bearer ${accessToken}`,
         ...init?.headers,
       },
     });
   } catch (err) {
-    if (!(err instanceof ApiError) || err.status !== 401) throw err;
+    if (!(err instanceof ApiError) || err.status !== 401 || !session || preferClerkToken) throw err;
 
     const accessToken = await tryRefresh();
     if (!accessToken) {
@@ -111,6 +136,30 @@ async function authorizedFetch<T>(
       headers: { Authorization: `Bearer ${accessToken}`, ...init?.headers },
     });
   }
+}
+
+async function getClerkToken() {
+  if (authTokenResolver) {
+    const token = await authTokenResolver();
+    if (token) return token;
+  }
+
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  if (!clerkPublishableKey) {
+    return null;
+  }
+
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const token = await window.Clerk?.session?.getToken();
+    if (token) return token;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  return null;
 }
 
 // --- Auth --------------------------------------------------------------------
@@ -369,6 +418,225 @@ export interface Dashboard {
 
 export function getDashboard() {
   return authorizedFetch<Dashboard>("/api/dashboard");
+}
+
+export interface AdminStatistics {
+  totalUsers: number;
+  totalLivestock: number;
+  scannedToday: number;
+  missingCount: number;
+  unknownTagCount: number;
+  readerCount?: number;
+  dealerRegistrationCount?: number;
+  pendingDealerRegistrationCount?: number;
+  damagedTagCount?: number;
+  missingLivestock: Array<{
+    id: string;
+    earNumber: string;
+    name?: string | null;
+  }>;
+  recentUsers: Array<{
+    id: string;
+    name: string;
+    phoneNumber: string;
+    createdAt: string;
+  }>;
+}
+
+export function getAdminStatistics() {
+  return authorizedFetch<AdminStatistics>("/api/admin/statistics");
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export interface AdminUser {
+  id: string;
+  phoneNumber: string;
+  name: string;
+  imageUrl: string | null;
+  role: "FARMER" | "ADMIN" | "DEALER";
+  aimag?: string;
+  sum?: string;
+  dealerId?: string;
+  status: "ACTIVE" | "SUSPENDED";
+  livestockCount: number;
+  readerCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminDealer extends AdminUser {
+  farmerCount: number;
+  managedLivestockCount: number;
+}
+
+export interface AdminLivestock extends Livestock {
+  owner: {
+    id: string;
+    name: string;
+    phoneNumber: string;
+    aimag?: string;
+    sum?: string;
+    status: "ACTIVE" | "SUSPENDED";
+  } | null;
+  lastScan: {
+    scannedAt: string;
+    direction: "ENTER" | "EXIT" | "UNKNOWN";
+    readerId: string | null;
+    readerName?: string;
+    readerLocation?: string;
+    rssi?: number;
+    antennaId?: string;
+  } | null;
+}
+
+export interface AdminDevice {
+  id: string;
+  name: string;
+  location?: string;
+  deviceSecretSet: boolean;
+  owner: {
+    id: string;
+    name: string;
+    phoneNumber: string;
+    aimag?: string;
+    sum?: string;
+  } | null;
+  status: "ONLINE" | "WARNING" | "OFFLINE";
+  lastScanAt?: string;
+  lastDirection?: "ENTER" | "EXIT" | "UNKNOWN";
+  lastEpc?: string;
+  rssi?: number;
+  antennaId?: string;
+  scanCount: number;
+  offlineQueue: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminTagPrefix {
+  value: string;
+  name: string;
+  label: string;
+  color: string;
+}
+
+export interface AdminActivity {
+  id: string;
+  type: "SCAN" | "DEALER_REGISTRATION" | "USER";
+  title: string;
+  description: string;
+  actor?: string;
+  createdAt: string;
+}
+
+function queryString(params: Record<string, string | number | undefined>) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") {
+      query.set(key, String(value));
+    }
+  }
+  return query.toString();
+}
+
+export function listAdminUsers(params: {
+  search?: string;
+  role?: AuthUser["role"];
+  status?: "ACTIVE" | "SUSPENDED";
+  aimag?: string;
+  page?: number;
+  limit?: number;
+} = {}) {
+  return authorizedFetch<PaginatedResult<AdminUser>>(
+    `/api/admin/users?${queryString(params)}`,
+  );
+}
+
+export function createAdminUser(input: { email: string; name?: string }) {
+  return authorizedFetch<AdminUser>("/api/admin/users", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function listAdminDealers(params: {
+  search?: string;
+  status?: "ACTIVE" | "SUSPENDED";
+  page?: number;
+  limit?: number;
+} = {}) {
+  return authorizedFetch<PaginatedResult<AdminDealer>>(
+    `/api/admin/dealers?${queryString(params)}`,
+  );
+}
+
+export function listAdminLivestock(params: {
+  search?: string;
+  status?: LivestockStatus;
+  species?: Species;
+  aimag?: string;
+  page?: number;
+  limit?: number;
+} = {}) {
+  return authorizedFetch<PaginatedResult<AdminLivestock>>(
+    `/api/admin/livestock?${queryString(params)}`,
+  );
+}
+
+export function listAdminDevices(params: {
+  search?: string;
+  page?: number;
+  limit?: number;
+} = {}) {
+  return authorizedFetch<PaginatedResult<AdminDevice>>(
+    `/api/admin/devices?${queryString(params)}`,
+  );
+}
+
+export function getAdminTagSettings() {
+  return authorizedFetch<{ prefixes: AdminTagPrefix[] }>("/api/admin/tag-settings");
+}
+
+export function listAdminActivity() {
+  return authorizedFetch<AdminActivity[]>("/api/admin/activity");
+}
+
+export function updateAdminUserStatus(id: string, status: "ACTIVE" | "SUSPENDED") {
+  return authorizedFetch<AdminUser>(`/api/admin/users/${id}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+}
+
+export function updateAdminUserRole(id: string, role: AuthUser["role"]) {
+  return authorizedFetch<AdminUser>(`/api/admin/users/${id}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+}
+
+export function importAdminTags(tags: Array<{ epc: string; status?: TagStatus; claimedByUserId?: string }>) {
+  return authorizedFetch<{ imported: number }>("/api/admin/tags/import", {
+    method: "POST",
+    body: JSON.stringify({ tags }),
+  });
+}
+
+export function updateAdminTagStatus(epc: string, status: TagStatus, claimedByUserId?: string) {
+  return authorizedFetch<TagRegistryEntry>(
+    `/api/admin/tags/${encodeURIComponent(epc)}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status, claimedByUserId }),
+    },
+  );
 }
 
 export interface MissingLivestockEntry {
