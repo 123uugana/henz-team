@@ -4,21 +4,31 @@
     "${workspaceFolder}\\backend\\tools\\rfid_bridge\\.venv\\Lib\\site-packages"
   ],
   "files.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/.next-*": true,
     "**/.wrangler": true,
     "**/.venv": true,
-    "**/downloads": true
+    "**/downloads": true,
+    "**/*.tsbuildinfo": true
   },
   "files.watcherExclude": {
     "**/node_modules/**": true,
+    "**/.next/**": true,
+    "**/.next-*/**": true,
     "**/.wrangler/**": true,
     "**/.venv/**": true,
-    "**/downloads/**": true
+    "**/downloads/**": true,
+    "**/*.tsbuildinfo": true
   },
   "search.exclude": {
     "**/node_modules": true,
+    "**/.next": true,
+    "**/.next-*": true,
     "**/.wrangler": true,
     "**/.venv": true,
-    "**/downloads": true
+    "**/downloads": true,
+    "**/*.tsbuildinfo": true
   },
   "css.lint.unknownAtRules": "ignore",
   "scss.lint.unknownAtRules": "ignore",
