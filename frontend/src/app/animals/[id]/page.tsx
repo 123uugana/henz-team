@@ -248,15 +248,6 @@ function AnimalDetailContent({ id }: { id: string }) {
             Засах
           </Button>
           <Button
-            variant="destructive"
-            disabled={deleting}
-            onClick={handleDelete}
-            className="w-full"
-          >
-            <Trash2 />
-            {deleting ? "Устгаж байна..." : "Бүртгэлээс устгах"}
-          </Button>
-          <Button
             variant="outline"
             onClick={toggleMissing}
             className={
@@ -353,6 +344,16 @@ function AnimalDetailContent({ id }: { id: string }) {
             </div>
           </div>
         ) : null}
+
+        <button
+          type="button"
+          disabled={deleting}
+          onClick={handleDelete}
+          className="mt-2 flex items-center justify-center gap-1.5 self-center text-xs font-medium text-red-600 disabled:opacity-50 dark:text-red-400"
+        >
+          <Trash2 className="size-3.5" />
+          {deleting ? "Устгаж байна..." : "Бүртгэлээс устгах"}
+        </button>
       </div>
     </PhoneFrame>
   );

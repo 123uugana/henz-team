@@ -2306,6 +2306,52 @@ async function handleListScans(db: ReturnType<typeof drizzle>, userId: string) {
   );
 }
 
+/**
+ * All of this user's currently-unclaimed tag sightings (one row per EPC,
+ * most recent scan), used by the "Ирсэн" tab. Deliberately not sourced from
+ * handleListScans — that feed is capped at RECENT_SCANS_LIMIT raw scan
+ * events, so once a user has more distinct unclaimed tags than that cap,
+ * older ones silently fall out of the window and the arrived count
+ * undercounts (and keeps changing) as new scans come in.
+ */
+async function handleArrivedTags(db: ReturnType<typeof drizzle>, userId: string) {
+  const rows = await db
+    .select({ epc: rfidScans.epc, scannedAt: rfidScans.scannedAt })
+    .from(rfidScans)
+    .where(and(eq(rfidScans.userId, userId), isNull(rfidScans.livestockId)))
+    .orderBy(desc(rfidScans.scannedAt))
+    .all();
+
+  const latestByEpc = new Map<string, string>();
+  for (const row of rows) {
+    if (!latestByEpc.has(row.epc)) latestByEpc.set(row.epc, row.scannedAt);
+  }
+  const epcs = [...latestByEpc.keys()];
+
+  // D1's Workers Binding caps bound parameters per query at 100, so a
+  // single inArray() over every unclaimed EPC can overflow it once a user
+  // has more than ~100 distinct unclaimed tags. Chunk the lookup.
+  const claimedByOthersEpcs = new Set<string>();
+  const EPC_CHUNK_SIZE = 90;
+  for (let i = 0; i < epcs.length; i += EPC_CHUNK_SIZE) {
+    const chunk = epcs.slice(i, i + EPC_CHUNK_SIZE);
+    const claimedByOthers = await db
+      .select({ epc: rfidTags.epc })
+      .from(rfidTags)
+      .where(and(inArray(rfidTags.epc, chunk), ne(rfidTags.userId, userId)))
+      .all();
+    for (const tag of claimedByOthers) claimedByOthersEpcs.add(tag.epc);
+  }
+
+  return apiResponse(
+    epcs.map((epc) => ({
+      epc,
+      scannedAt: latestByEpc.get(epc)!,
+      foreignOwner: claimedByOthersEpcs.has(epc),
+    })),
+  );
+}
+
 async function handleListAlerts(db: ReturnType<typeof drizzle>, userId: string) {
   const rows = await db
     .select({
@@ -3821,6 +3867,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
 
   if (request.method === 'GET' && path === '/api/reports/missing') {
     return handleMissingLivestock(db, user.id);
+  }
+
+  if (request.method === 'GET' && path === '/api/reports/arrived') {
+    return handleArrivedTags(db, user.id);
   }
 
   if (request.method === 'POST' && path === '/api/search-signal') {

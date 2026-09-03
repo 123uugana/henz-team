@@ -1,10 +1,11 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   Camera,
   CheckCircle2,
+  ChevronDown,
   CircleAlert,
   Lock,
   Mars,
@@ -15,6 +16,11 @@ import { PhoneFrame } from "@/components/phone-frame";
 import { AppHeader } from "@/components/app-header";
 import { GoatIcon, SheepIcon } from "@/components/species-icon";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -29,6 +35,11 @@ import {
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { resizeImage } from "@/lib/image";
+import {
+  decodeHexAsciiEpc,
+  detectSpeciesFromTag,
+  normalizeTagEpc,
+} from "@/lib/species-detect";
 import { cn } from "@/lib/utils";
 
 const SPECIES_INFO: Record<Species, { label: string; icon: typeof SheepIcon }> =
@@ -42,42 +53,6 @@ const GENDERS = [
   { value: "FEMALE", label: "Эм", icon: Venus },
 ] as const;
 
-function detectSpeciesFromTag(code: string): Species | null {
-  const readable = decodeHexAsciiEpc(code) ?? code;
-  const prefix = readable.trim().charAt(0).toUpperCase();
-  if (prefix === "H") return "SHEEP";
-  if (prefix === "Y") return "GOAT";
-  return null;
-}
-
-function decodeHexAsciiEpc(code: string): string | null {
-  const compact = code.trim().replace(/[\s:-]/g, "");
-  if (
-    compact.length < 2 ||
-    compact.length % 2 !== 0 ||
-    !/^[0-9A-Fa-f]+$/.test(compact)
-  ) {
-    return null;
-  }
-
-  let decoded = "";
-  for (let index = 0; index < compact.length; index += 2) {
-    const value = Number.parseInt(compact.slice(index, index + 2), 16);
-    if (value < 32 || value > 126) return null;
-    decoded += String.fromCharCode(value);
-  }
-
-  return decoded || null;
-}
-
-function normalizeTagEpc(code: string): string {
-  const normalized = code.trim().replace(/\s+/g, "").toUpperCase();
-  if (/^[0-9A-F]+$/.test(normalized) && normalized.length % 2 === 0) {
-    return normalized;
-  }
-  return normalized.replace(/^([HY])-?/, "$1-");
-}
-
 function getReadableTagCode(epc: string): string {
   return decodeHexAsciiEpc(epc) ?? epc;
 }
@@ -88,9 +63,19 @@ function isFreshScan(scan: RecentScan): boolean {
 }
 
 export default function RegisterAnimalPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterAnimalForm />
+    </Suspense>
+  );
+}
+
+function RegisterAnimalForm() {
   useAuthGuard();
   const router = useRouter();
-  const [tagCode, setTagCode] = useState("");
+  const searchParams = useSearchParams();
+  const [tagCode, setTagCode] = useState(() => searchParams.get("epc") ?? "");
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [nickname, setNickname] = useState("");
   const [age, setAge] = useState("");
   const [features, setFeatures] = useState("");
@@ -247,17 +232,17 @@ export default function RegisterAnimalPage() {
           <div className="flex items-center justify-between gap-3">
             <span className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-gray-300">
               <ScanLine className="size-4 text-[#a85b0a] dark:text-[#f2a93c]" />
-              RFID live
+              Уншигчийн сүүлийн уншилт
             </span>
-            <span className="text-[11px] text-slate-500 dark:text-gray-400">
-              {latestScan
-                ? new Date(latestScan.scannedAt).toLocaleTimeString("mn-MN", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
-                  })
-                : "waiting..."}
-            </span>
+            {latestScan ? (
+              <span className="text-[11px] text-slate-500 dark:text-gray-400">
+                {new Date(latestScan.scannedAt).toLocaleTimeString("mn-MN", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}
+              </span>
+            ) : null}
           </div>
 
           {latestScan ? (
@@ -272,7 +257,7 @@ export default function RegisterAnimalPage() {
                   </p>
                 ) : null}
                 <p className="mt-1 text-[11px] text-slate-500 dark:text-gray-400">
-                  {latestScan.reader?.name ?? latestScan.reader?.id ?? "HH100"}
+                  {latestScan.reader?.name ?? "Уншигч"}
                 </p>
               </div>
               <Button
@@ -286,7 +271,7 @@ export default function RegisterAnimalPage() {
             </div>
           ) : (
             <p className="mt-3 text-xs text-slate-500 dark:text-gray-400">
-              HH100 дээр tag уншуулахад энд гарч ирнэ.
+              Шошгоо уншигчаар уншуулна уу, энд автоматаар гарч ирнэ.
             </p>
           )}
 
@@ -329,105 +314,124 @@ export default function RegisterAnimalPage() {
         )}
       </div>
 
-      <div className="mt-8 flex flex-col gap-5">
-        <h2 className="text-sm font-semibold text-slate-700 dark:text-gray-300">
-          Мэдээлэл оруулах
-        </h2>
-
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="nickname" className="text-slate-700 dark:text-gray-300">
-            Нэр / Хоч (заавал биш)
-          </Label>
-          <Input
-            id="nickname"
-            value={nickname}
-            onChange={(e) => setNickname(e.target.value)}
-            placeholder="Жишээ: Халтар"
-            className="h-14 border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] px-4 py-0 text-base text-slate-900 dark:text-white placeholder:text-slate-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="age" className="text-slate-700 dark:text-gray-300">
-              Нас
-            </Label>
-            <Input
-              id="age"
-              type="number"
-              value={age}
-              onChange={(e) => setAge(e.target.value)}
-              placeholder="0"
-              className="h-14 border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] px-4 py-0 text-base text-slate-900 dark:text-white placeholder:text-slate-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
-            />
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <Label className="text-slate-700 dark:text-gray-300">Хүйс</Label>
-            <div className="grid h-14 grid-cols-2 gap-2">
-              {GENDERS.map(({ value, label, icon: Icon }) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setGender(value)}
-                  className={cn(
-                    "flex items-center justify-center gap-1.5 rounded-2xl border text-sm font-medium transition-colors",
-                    gender === value
-                      ? "border-[#f2a93c] bg-amber-50 dark:bg-[#1c1408] text-[#a85b0a] dark:text-[#f2a93c]"
-                      : "border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] text-slate-500 dark:text-gray-400 hover:border-slate-300"
-                  )}
-                >
-                  <Icon className="size-4" strokeWidth={1.75} />
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="features" className="text-slate-700 dark:text-gray-300">
-            Онцлог шинж
-          </Label>
-          <Input
-            id="features"
-            value={features}
-            onChange={(e) => setFeatures(e.target.value)}
-            placeholder="Жишээ: Цагаан толботой"
-            className="h-14 border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] px-4 py-0 text-base text-slate-900 dark:text-white placeholder:text-slate-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
-          />
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <Label className="text-slate-700 dark:text-gray-300">Зураг</Label>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="flex h-32 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-slate-300 dark:border-white/15 bg-white dark:bg-[#161c2c] hover:border-[#f2a93c]/50"
-          >
-            {photoPreview ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={photoPreview}
-                alt="Малын зураг"
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <span className="flex flex-col items-center gap-1.5 text-slate-500 dark:text-gray-400">
-                <Camera className="size-6" strokeWidth={1.5} />
-                <span className="text-sm">Зураг нэмэх</span>
+      <div className="mt-8 flex flex-col gap-3">
+        <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
+          <CollapsibleTrigger className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left dark:border-white/10 dark:bg-[#161c2c]">
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-slate-700 dark:text-gray-300">
+                Нэмэлт мэдээлэл
               </span>
-            )}
-          </button>
-        </div>
+              <span className="text-xs text-slate-500 dark:text-gray-400">
+                Нэр, нас, хүйс, зураг (заавал биш)
+              </span>
+            </div>
+            <ChevronDown
+              className={cn(
+                "size-4 shrink-0 text-slate-500 transition-transform dark:text-gray-400",
+                detailsOpen ? "rotate-180" : "",
+              )}
+            />
+          </CollapsibleTrigger>
+
+          <CollapsibleContent>
+            <div className="flex flex-col gap-5 pt-4">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="nickname" className="text-slate-700 dark:text-gray-300">
+                  Нэр / Хоч (заавал биш)
+                </Label>
+                <Input
+                  id="nickname"
+                  value={nickname}
+                  onChange={(e) => setNickname(e.target.value)}
+                  placeholder="Жишээ: Халтар"
+                  className="h-14 border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] px-4 py-0 text-base text-slate-900 dark:text-white placeholder:text-slate-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="age" className="text-slate-700 dark:text-gray-300">
+                    Нас
+                  </Label>
+                  <Input
+                    id="age"
+                    type="number"
+                    value={age}
+                    onChange={(e) => setAge(e.target.value)}
+                    placeholder="0"
+                    className="h-14 border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] px-4 py-0 text-base text-slate-900 dark:text-white placeholder:text-slate-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label className="text-slate-700 dark:text-gray-300">Хүйс</Label>
+                  <div className="grid h-14 grid-cols-2 gap-2">
+                    {GENDERS.map(({ value, label, icon: Icon }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setGender(value)}
+                        className={cn(
+                          "flex items-center justify-center gap-1.5 rounded-2xl border text-sm font-medium transition-colors",
+                          gender === value
+                            ? "border-[#f2a93c] bg-amber-50 dark:bg-[#1c1408] text-[#a85b0a] dark:text-[#f2a93c]"
+                            : "border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] text-slate-500 dark:text-gray-400 hover:border-slate-300"
+                        )}
+                      >
+                        <Icon className="size-4" strokeWidth={1.75} />
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="features" className="text-slate-700 dark:text-gray-300">
+                  Онцлог шинж
+                </Label>
+                <Input
+                  id="features"
+                  value={features}
+                  onChange={(e) => setFeatures(e.target.value)}
+                  placeholder="Жишээ: Цагаан толботой"
+                  className="h-14 border-slate-200 dark:border-white/10 bg-white dark:bg-[#161c2c] px-4 py-0 text-base text-slate-900 dark:text-white placeholder:text-slate-500 focus-visible:border-[#f2a93c] focus-visible:ring-0"
+                />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Label className="text-slate-700 dark:text-gray-300">Зураг</Label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex h-32 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-slate-300 dark:border-white/15 bg-white dark:bg-[#161c2c] hover:border-[#f2a93c]/50"
+                >
+                  {photoPreview ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={photoPreview}
+                      alt="Малын зураг"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <span className="flex flex-col items-center gap-1.5 text-slate-500 dark:text-gray-400">
+                      <Camera className="size-6" strokeWidth={1.5} />
+                      <span className="text-sm">Зураг нэмэх</span>
+                    </span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
 
         {submitError ? (
           <p className="text-sm text-red-600 dark:text-red-400">{submitError}</p>

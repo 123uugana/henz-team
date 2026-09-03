@@ -365,6 +365,55 @@ export function listScans() {
   return authorizedFetch<RecentScan[]>("/api/scans");
 }
 
+export interface ArrivedTag {
+  epc: string;
+  scannedAt: string;
+  /** True when this EPC is registered to a livestock owned by a different user. */
+  foreignOwner: boolean;
+}
+
+/**
+ * All of my currently-unclaimed tag sightings (one row per EPC). Unlike
+ * listScans(), this isn't capped to the most recent N raw scan events, so
+ * the "Ирсэн" counts stay accurate even once a reader has picked up more
+ * distinct unclaimed tags than the recent-activity feed can hold.
+ */
+export function getArrivedTags() {
+  return authorizedFetch<ArrivedTag[]>("/api/reports/arrived");
+}
+
+export interface ScanInput {
+  epc: string;
+  direction?: "ENTER" | "EXIT" | "UNKNOWN";
+  readerId?: string;
+  rssi?: number;
+  antennaId?: string;
+}
+
+export interface IngestScansResult {
+  accepted: number;
+  inserted: number;
+  duplicates: number;
+  known: number;
+  unknown: number;
+  unknownEpcs: string[];
+  scans: Array<{
+    epc: string;
+    matched: boolean;
+    duplicate: boolean;
+    scanId: string;
+    livestock: { id: string; earNumber: string; name?: string } | null;
+  }>;
+}
+
+/** Submits scans read by a Bluetooth-paired handheld reader under the logged-in user. */
+export function ingestScans(scans: ScanInput[]) {
+  return authorizedFetch<IngestScansResult>("/api/scans", {
+    method: "POST",
+    body: JSON.stringify({ scans }),
+  });
+}
+
 // --- Dashboard / reports -------------------------------------------------------
 
 export interface DashboardScan {

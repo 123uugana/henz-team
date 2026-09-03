@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useState } from "react";
 import {
-  Antenna,
+  ChevronRight,
   MapPin,
   PawPrint,
+  RefreshCw,
   ScanLine,
   TriangleAlert,
 } from "lucide-react";
@@ -27,8 +28,14 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 
 export default function DashboardPage() {
   useAuthGuard();
-  const { data: dashboard, loading, error } = useApi(getDashboard, "");
+  const { data: dashboard, loading, error, refresh } = useApi(getDashboard, "");
   const [activeScan, setActiveScan] = useState<DashboardScan | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    refresh().finally(() => setRefreshing(false));
+  };
 
   const total = dashboard?.totalLivestock ?? 0;
   const missingCount = dashboard?.today.unscannedLivestock ?? 0;
@@ -37,6 +44,17 @@ export default function DashboardPage() {
   return (
     <PhoneFrame>
       <AppHeader
+        actions={
+          <Button
+            variant="ghost"
+            size="icon-lg"
+            aria-label="Шинэчлэх"
+            onClick={handleRefresh}
+            className="rounded-full text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-gray-300 dark:hover:bg-white/5 dark:hover:text-gray-300"
+          >
+            <RefreshCw className={refreshing ? "animate-spin" : undefined} />
+          </Button>
+        }
         status={
           <Link
             href="/devices"
@@ -97,93 +115,29 @@ export default function DashboardPage() {
               className="w-full border-[#f2a93c]/50 bg-transparent text-[#a85b0a] dark:text-[#f2a93c] hover:bg-[#f2a93c]/10"
               render={<Link href="/missing" />}
             >
-              Тэмдэглэсэн дутуу мал ({dashboard?.missingCount ?? 0}) →
+              Дутуу мал ({missingCount}) →
             </Button>
           </Card>
 
-          <div className="flex flex-col gap-3">
-            <h2 className="text-sm font-semibold text-slate-700 dark:text-gray-300">
-              Сүргийн байдал
-            </h2>
-
-            <div className="grid grid-cols-2 gap-3">
-              <Card className="gap-1 bg-white dark:bg-[#141a2c] p-4 ring-1 ring-slate-200/80 dark:ring-white/5">
-                <PawPrint
-                  className="size-5 text-[#a85b0a] dark:text-[#f2a93c]"
-                  strokeWidth={1.75}
-                />
-                <p className="text-xl font-bold">{total}</p>
-                <p className="text-xs text-slate-500 dark:text-gray-400">
-                  Нийт бүртгэлтэй
-                </p>
-              </Card>
-              <Card className="gap-1 bg-white dark:bg-[#141a2c] p-4 ring-1 ring-slate-200/80 dark:ring-white/5">
+          <Link href="/scan">
+            <Card className="flex-row items-center gap-3 bg-white dark:bg-[#141a2c] p-4 ring-1 ring-slate-200/80 dark:ring-white/5">
+              <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-[#f2a93c]/15">
                 <ScanLine
                   className="size-5 text-[#a85b0a] dark:text-[#f2a93c]"
                   strokeWidth={1.75}
                 />
-                <p className="text-xl font-bold">
-                  {dashboard?.scannedToday ?? 0}
+              </span>
+              <div className="flex min-w-0 flex-1 flex-col">
+                <p className="text-sm font-semibold">
+                  Уншигчаар бөөнөөр бүртгэх
                 </p>
                 <p className="text-xs text-slate-500 dark:text-gray-400">
-                  Өнөөдөр уншигдсан
+                  RFID уншигчаар олон малыг нэг дор бүртгэ
                 </p>
-              </Card>
-            </div>
-          </div>
-
-          {dashboard && dashboard.readers.length > 0 ? (
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-700 dark:text-gray-300">
-                  Төхөөрөмж
-                </h2>
-                <Link
-                  href="/devices"
-                  className="text-xs font-medium text-[#a85b0a] dark:text-[#f2a93c]"
-                >
-                  Бүгдийг харах →
-                </Link>
               </div>
-
-              <div className="flex flex-col gap-2">
-                {dashboard.readers.map((reader) => (
-                  <Card
-                    key={reader.id}
-                    className="flex-row items-center justify-between gap-3 bg-white dark:bg-[#141a2c] p-3 ring-1 ring-slate-200/80 dark:ring-white/5"
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-slate-100 dark:bg-white/5">
-                        <Antenna
-                          className="size-4 text-[#a85b0a] dark:text-[#f2a93c]"
-                          strokeWidth={1.75}
-                        />
-                      </span>
-                      <div className="flex min-w-0 flex-col">
-                        <p className="truncate text-sm font-medium">
-                          {reader.name}
-                        </p>
-                        <p className="text-xs text-slate-500 dark:text-gray-400">
-                          {reader.lastScanAt
-                            ? `Сүүлд: ${new Date(reader.lastScanAt).toLocaleString("mn-MN")}`
-                            : "Холбогдоогүй байна"}
-                        </p>
-                      </div>
-                    </div>
-                    <Badge
-                      className={
-                        reader.isActiveToday
-                          ? "bg-emerald-400/15 text-emerald-700 dark:text-emerald-400"
-                          : "bg-slate-100 text-slate-600 dark:bg-white/5 dark:text-gray-400"
-                      }
-                    >
-                      {reader.isActiveToday ? "ONLINE" : "OFFLINE"}
-                    </Badge>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          ) : null}
+              <ChevronRight className="size-5 shrink-0 text-slate-400 dark:text-gray-500" />
+            </Card>
+          </Link>
 
           {dashboard && dashboard.recentScans.length > 0 ? (
             <div className="flex flex-col gap-3">

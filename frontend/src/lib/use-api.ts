@@ -9,16 +9,14 @@ import { ApiError } from "@/lib/api";
  * eslint plugin requires dependency arrays to be literal at each call site,
  * which rules out a generic hook that forwards an arbitrary deps array.
  *
- * `loading` only reflects the very first fetch: refetches (key/refresh changes)
- * keep showing the previous data until the new result lands, rather than
- * resetting to a loading state — every state update happens inside the
- * fetch's own then/catch callbacks, never synchronously in the effect body.
+ * `loading` only reflects the very first fetch. Call the returned `refresh()`
+ * to re-fetch on demand (e.g. a refresh button) — it returns a promise so the
+ * caller can track its own in-flight state without an effect watching `data`.
  */
 export function useApi<T>(fetcher: () => Promise<T>, key: string) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [version, setVersion] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,9 +38,20 @@ export function useApi<T>(fetcher: () => Promise<T>, key: string) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, version]);
+  }, [key]);
 
-  const refresh = () => setVersion((v) => v + 1);
+  // Callable from an event handler (e.g. a refresh button's onClick), so the
+  // caller can await it to know exactly when the refetch has landed.
+  const refresh = () => {
+    return fetcher()
+      .then((result) => {
+        setData(result);
+        setError(null);
+      })
+      .catch((err) => {
+        setError(err instanceof ApiError ? err.message : "Алдаа гарлаа.");
+      });
+  };
 
   return { data, loading, error, refresh, setData };
 }

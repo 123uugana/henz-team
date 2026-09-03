@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { Antenna, Clock, MapPin, Radio } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
 import { BottomNav } from "@/components/bottom-nav";
 import { PhoneFrame } from "@/components/phone-frame";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { getDashboard } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
@@ -21,7 +23,16 @@ export default function DeviceHealthPage() {
       {error ? <p className="mt-10 text-center text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {data ? (
         <>
-          <Card className="mt-6 flex-row items-center justify-between bg-white p-4 ring-1 ring-slate-200/80 dark:bg-[#141a2c] dark:ring-white/5">
+          <Button
+            variant="brand"
+            size="xl"
+            className="mt-6 w-full"
+            render={<Link href="/scan" />}
+          >
+            Уншигчаар унших →
+          </Button>
+
+          <Card className="mt-4 flex-row items-center justify-between bg-white p-4 ring-1 ring-slate-200/80 dark:bg-[#141a2c] dark:ring-white/5">
             <div className="flex items-center gap-3">
               <Radio className="size-5 text-[#a85b0a] dark:text-[#f2a93c]" />
               <div><p className="text-sm font-semibold">RFID уншигч</p><p className="text-xs text-slate-500 dark:text-gray-400">Нийт {data.readerCount} төхөөрөмж</p></div>

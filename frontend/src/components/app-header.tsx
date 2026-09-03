@@ -9,10 +9,12 @@ export function AppHeader({
   backHref,
   title = "Хэнц Хурга",
   status,
+  actions,
 }: {
   backHref?: string;
   title?: string;
   status?: React.ReactNode;
+  actions?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center justify-between">
@@ -26,6 +28,7 @@ export function AppHeader({
       </div>
 
       <div className="flex items-center">
+        {actions}
         <ThemeToggle />
         <Button
           variant="ghost"

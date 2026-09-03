@@ -18,8 +18,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  getArrivedTags,
   getMissingLivestock,
-  listScans,
   sendSearchSignal,
   type MissingLivestockEntry,
   type Species,
@@ -51,19 +51,19 @@ export default function MissingAnimalsPage() {
     loading: loadingMissing,
     error: missingError,
   } = useApi(getMissingLivestock, "");
-  const { data: scans, loading: loadingScans } = useApi(listScans, "");
+  const { data: arrived, loading: loadingScans } = useApi(getArrivedTags, "");
   const [signaling, setSignaling] = useState(false);
   const [signalMessage, setSignalMessage] = useState<string | null>(null);
 
   const unclaimedCount = useMemo(() => {
-    if (!scans) return 0;
-    return new Set(scans.filter((s) => !s.livestock && !s.foreignOwner).map((s) => s.epc)).size;
-  }, [scans]);
+    if (!arrived) return 0;
+    return arrived.filter((tag) => !tag.foreignOwner).length;
+  }, [arrived]);
 
   const foreignCount = useMemo(() => {
-    if (!scans) return 0;
-    return new Set(scans.filter((s) => s.foreignOwner).map((s) => s.epc)).size;
-  }, [scans]);
+    if (!arrived) return 0;
+    return arrived.filter((tag) => tag.foreignOwner).length;
+  }, [arrived]);
 
   const arrivedCount = unclaimedCount + foreignCount;
 
@@ -153,6 +153,25 @@ export default function MissingAnimalsPage() {
                   ) : null}
                 </div>
               </Card>
+
+              {missingCount > 0 ? (
+                <div className="flex flex-col gap-2">
+                  <Button
+                    variant="outline"
+                    className="w-full border-[#f2a93c]/40 bg-transparent text-[#a85b0a] dark:text-[#f2a93c] hover:bg-[#f2a93c]/10"
+                    disabled={signaling}
+                    onClick={handleSearchSignal}
+                  >
+                    <Megaphone />
+                    {signaling ? "Илгээж байна..." : "Хайлтын дохио илгээх"}
+                  </Button>
+                  {signalMessage ? (
+                    <p className="text-center text-xs text-slate-500 dark:text-gray-400">
+                      {signalMessage}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
 
               {missingCount === 0 ? (
                 <p className="text-center text-sm text-slate-500 dark:text-gray-400">
