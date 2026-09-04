@@ -6,7 +6,6 @@ import { createClerkClient, verifyToken } from '@clerk/backend';
 import { z } from 'zod';
 import {
   alerts,
-  dealerRegistrations,
   devicePushTokens,
   livestock,
   livestockRemovals,
@@ -72,8 +71,11 @@ const jsonHeaders = {
   'Content-Type': 'application/json',
 };
 
+const sellerLoginModeSchema = z.enum(['seller', 'dealer']).optional();
+
 const sendOtpSchema = z.object({
   phoneNumber: z.string().regex(/^\d{8}$/),
+  mode: sellerLoginModeSchema,
 });
 
 const verifyOtpSchema = sendOtpSchema.extend({
@@ -150,16 +152,6 @@ const claimTagSchema = z.object({
   epc: z.string().trim().min(1),
 });
 
-const dealerRegistrationInputSchema = z.object({
-  orgName: z.string().trim().min(1),
-  contact: z.string().trim().min(1),
-  prefixRequested: z.string().trim().min(1),
-});
-
-const decideDealerRegistrationSchema = z.object({
-  status: z.enum(['APPROVED', 'REJECTED']),
-});
-
 const adminUserStatusSchema = z.object({
   status: z.enum(['ACTIVE', 'SUSPENDED']),
 });
@@ -172,6 +164,20 @@ const adminCreateUserSchema = z.object({
   email: z.string().trim().email().transform((value) => value.toLowerCase()),
   name: z.string().trim().min(2).optional(),
 });
+
+const adminSellerSchema = z.object({
+  phoneNumber: z.string().regex(/^\d{8}$/),
+  name: z.string().trim().min(2, 'Нэр хамгийн багадаа 2 тэмдэгт байна.'),
+  aimag: z.string().trim().optional(),
+  sum: z.string().trim().optional(),
+});
+
+const adminUpdateSellerSchema = z.object({
+  phoneNumber: z.string().regex(/^\d{8}$/).optional(),
+  name: z.string().trim().min(2, 'Нэр хамгийн багадаа 2 тэмдэгт байна.').optional(),
+  aimag: z.string().trim().nullable().optional(),
+  sum: z.string().trim().nullable().optional(),
+}).refine((input) => Object.keys(input).length > 0);
 
 const adminTagStatusSchema = z.object({
   status: z.enum(['AVAILABLE', 'CLAIMED', 'LOCKED', 'DAMAGED']),
@@ -197,6 +203,14 @@ const addFarmerSchema = z.object({
   aimag: z.string().trim().optional(),
   sum: z.string().trim().optional(),
 });
+
+const updateFarmerSchema = z.object({
+  name: z.string().trim().min(2, 'Нэр хамгийн багадаа 2 тэмдэгт байна.').optional(),
+  phoneNumber: z.string().regex(/^\d{8}$/).optional(),
+  aimag: z.string().trim().nullable().optional(),
+  sum: z.string().trim().nullable().optional(),
+  status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
+}).refine((input) => Object.keys(input).length > 0);
 
 const HISTORY_RANGES = ['7d', '1m', '3m', '6m', '1y'] as const;
 const HISTORY_RANGE_DAYS: Record<(typeof HISTORY_RANGES)[number], number> = {
@@ -534,6 +548,10 @@ async function getSessionAuthUser(token: string | undefined, db: ReturnType<type
 
   if (!user) {
     throw new ApiFailure(401, 'Нэвтрэх эрх буруу байна.', 'INVALID_TOKEN');
+  }
+
+  if (user.status === 'SUSPENDED') {
+    throw new ApiFailure(403, 'Хэрэглэгчийн эрх идэвхгүй байна.', 'USER_SUSPENDED');
   }
 
   return { ...user, sessionId: payload.sid ?? null } as AuthUser;
@@ -1270,6 +1288,26 @@ async function handleSendOtp(request: Request, db: ReturnType<typeof drizzle>, e
   const input = await parseJson(request, sendOtpSchema);
   const timestamp = now();
 
+  if (input.mode === 'seller' || input.mode === 'dealer') {
+    const user = await db.select().from(users).where(eq(users.phoneNumber, input.phoneNumber)).get();
+
+    if (!user) {
+      throw new ApiFailure(
+        404,
+        'Таны дугаар системд бүртгэлгүй байна. Админтай холбогдоно уу.',
+        'SELLER_NOT_REGISTERED',
+      );
+    }
+
+    if (user.role !== 'DEALER') {
+      throw new ApiFailure(403, 'Энэ дугаар борлуулагчийн эрхгүй байна.', 'FORBIDDEN');
+    }
+
+    if (user.status !== 'ACTIVE') {
+      throw new ApiFailure(403, 'Борлуулагчийн эрх идэвхгүй байна.', 'USER_SUSPENDED');
+    }
+  }
+
   const latestOtp = await db
     .select()
     .from(otpCodes)
@@ -1376,6 +1414,14 @@ async function handleVerifyOtp(request: Request, db: ReturnType<typeof drizzle>,
     .get();
 
   if (!user) {
+    if (input.mode === 'seller' || input.mode === 'dealer') {
+      throw new ApiFailure(
+        404,
+        'Таны дугаар системд бүртгэлгүй байна. Админтай холбогдоно уу.',
+        'SELLER_NOT_REGISTERED',
+      );
+    }
+
     const timestamp = now();
     user = {
       id: createId('user'),
@@ -1391,6 +1437,18 @@ async function handleVerifyOtp(request: Request, db: ReturnType<typeof drizzle>,
       updatedAt: timestamp,
     };
     await db.insert(users).values(user);
+  }
+
+  if (input.mode === 'seller' || input.mode === 'dealer') {
+    if (user.role !== 'DEALER') {
+      throw new ApiFailure(403, 'Энэ дугаар борлуулагчийн эрхгүй байна.', 'FORBIDDEN');
+    }
+
+    if (user.status !== 'ACTIVE') {
+      throw new ApiFailure(403, 'Борлуулагчийн эрх идэвхгүй байна.', 'USER_SUSPENDED');
+    }
+  } else if (user.status !== 'ACTIVE') {
+    throw new ApiFailure(403, 'Хэрэглэгчийн эрх идэвхгүй байна.', 'USER_SUSPENDED');
   }
 
   const tokens = await createSession(db, env, user.id);
@@ -1452,6 +1510,10 @@ async function handleRefresh(request: Request, db: ReturnType<typeof drizzle>, e
 
   if (!user) {
     throw new ApiFailure(401, 'Refresh token expired.', 'REFRESH_TOKEN_EXPIRED');
+  }
+
+  if (user.status === 'SUSPENDED') {
+    throw new ApiFailure(403, 'Хэрэглэгчийн эрх идэвхгүй байна.', 'USER_SUSPENDED');
   }
 
   await db
@@ -2754,8 +2816,6 @@ async function handleAdminStatistics(db: ReturnType<typeof drizzle>) {
     unknownTags,
     scannedToday,
     totalReaders,
-    totalDealerRegistrations,
-    pendingDealerRegistrations,
     damagedTags,
   ] = await Promise.all([
     db.select({ value: count() }).from(users).get(),
@@ -2774,15 +2834,9 @@ async function handleAdminStatistics(db: ReturnType<typeof drizzle>) {
     db
     .select({ value: count() })
     .from(rfidScans)
-    .where(like(rfidScans.scannedAt, `${today}%`))
+      .where(like(rfidScans.scannedAt, `${today}%`))
       .get(),
     db.select({ value: count() }).from(rfidReaders).get(),
-    db.select({ value: count() }).from(dealerRegistrations).get(),
-    db
-      .select({ value: count() })
-      .from(dealerRegistrations)
-      .where(eq(dealerRegistrations.status, 'PENDING'))
-      .get(),
     db
       .select({ value: count() })
       .from(rfidTagRegistry)
@@ -2820,8 +2874,6 @@ async function handleAdminStatistics(db: ReturnType<typeof drizzle>) {
     missingCount: missing?.value ?? 0,
     unknownTagCount: unknownTags?.value ?? 0,
     readerCount: totalReaders?.value ?? 0,
-    dealerRegistrationCount: totalDealerRegistrations?.value ?? 0,
-    pendingDealerRegistrationCount: pendingDealerRegistrations?.value ?? 0,
     damagedTagCount: damagedTags?.value ?? 0,
     missingLivestock,
     recentUsers,
@@ -2955,6 +3007,127 @@ async function handleAdminCreateUser(request: Request, db: ReturnType<typeof dri
   return apiResponse(adminUserResponse(created!, 0, 0), { status: 201 });
 }
 
+async function dealerCounts(db: ReturnType<typeof drizzle>, dealerId: string) {
+  const farmerCount = await db
+    .select({ value: count() })
+    .from(users)
+    .where(eq(users.dealerId, dealerId))
+    .get();
+  const farmers = await db.select({ id: users.id }).from(users).where(eq(users.dealerId, dealerId)).all();
+  const farmerIds = farmers.map((farmer) => farmer.id);
+  const livestockCount = farmerIds.length > 0
+    ? await db
+      .select({ value: count() })
+      .from(livestock)
+      .where(inArray(livestock.userId, farmerIds))
+      .get()
+    : null;
+
+  return {
+    farmerCount: farmerCount?.value ?? 0,
+    livestockCount: livestockCount?.value ?? 0,
+  };
+}
+
+async function adminDealerResponse(db: ReturnType<typeof drizzle>, dealer: typeof users.$inferSelect) {
+  const counts = await dealerCounts(db, dealer.id);
+  return {
+    ...adminUserResponse(dealer, 0, 0),
+    farmerCount: counts.farmerCount,
+    managedLivestockCount: counts.livestockCount,
+  };
+}
+
+async function handleAdminCreateDealer(request: Request, db: ReturnType<typeof drizzle>) {
+  const input = await parseJson(request, adminSellerSchema);
+  const existing = await db.select().from(users).where(eq(users.phoneNumber, input.phoneNumber)).get();
+
+  if (existing) {
+    throw new ApiFailure(409, 'Энэ утасны дугаар бүртгэлтэй байна', 'PHONE_ALREADY_EXISTS');
+  }
+
+  const timestamp = now();
+  const id = createId('user');
+  await db.insert(users).values({
+    id,
+    phoneNumber: input.phoneNumber,
+    name: input.name.trim(),
+    imageUrl: null,
+    role: 'DEALER',
+    aimag: cleanOptionalText(input.aimag),
+    sum: cleanOptionalText(input.sum),
+    dealerId: null,
+    status: 'ACTIVE',
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+
+  const created = await db.select().from(users).where(eq(users.id, id)).get();
+  return apiResponse(await adminDealerResponse(db, created!), { status: 201 });
+}
+
+async function handleAdminGetDealer(db: ReturnType<typeof drizzle>, dealerId: string) {
+  const dealer = await db
+    .select()
+    .from(users)
+    .where(and(eq(users.id, dealerId), eq(users.role, 'DEALER')))
+    .get();
+
+  if (!dealer) {
+    throw new ApiFailure(404, 'Борлуулагч олдсонгүй.', 'NOT_FOUND');
+  }
+
+  return apiResponse(await adminDealerResponse(db, dealer));
+}
+
+async function handleAdminUpdateDealer(request: Request, db: ReturnType<typeof drizzle>, dealerId: string) {
+  const input = await parseJson(request, adminUpdateSellerSchema);
+  const dealer = await db
+    .select()
+    .from(users)
+    .where(and(eq(users.id, dealerId), eq(users.role, 'DEALER')))
+    .get();
+
+  if (!dealer) {
+    throw new ApiFailure(404, 'Борлуулагч олдсонгүй.', 'NOT_FOUND');
+  }
+
+  if (input.phoneNumber && input.phoneNumber !== dealer.phoneNumber) {
+    const existing = await db.select().from(users).where(eq(users.phoneNumber, input.phoneNumber)).get();
+    if (existing) {
+      throw new ApiFailure(409, 'Энэ утасны дугаар бүртгэлтэй байна', 'PHONE_ALREADY_EXISTS');
+    }
+  }
+
+  await db
+    .update(users)
+    .set({
+      ...(input.phoneNumber !== undefined ? { phoneNumber: input.phoneNumber } : {}),
+      ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+      ...(input.aimag !== undefined ? { aimag: cleanOptionalText(input.aimag) } : {}),
+      ...(input.sum !== undefined ? { sum: cleanOptionalText(input.sum) } : {}),
+      updatedAt: now(),
+    })
+    .where(eq(users.id, dealer.id));
+
+  const updated = await db.select().from(users).where(eq(users.id, dealer.id)).get();
+  return apiResponse(await adminDealerResponse(db, updated!));
+}
+
+async function handleAdminDealerFarmers(request: Request, db: ReturnType<typeof drizzle>, dealerId: string) {
+  const dealer = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.id, dealerId), eq(users.role, 'DEALER')))
+    .get();
+
+  if (!dealer) {
+    throw new ApiFailure(404, 'Борлуулагч олдсонгүй.', 'NOT_FOUND');
+  }
+
+  return handleListFarmers(request, db, dealerId);
+}
+
 async function handleAdminUpdateUserStatus(request: Request, db: ReturnType<typeof drizzle>, userId: string) {
   const input = await parseJson(request, adminUserStatusSchema);
   const existing = await db.select().from(users).where(eq(users.id, userId)).get();
@@ -3015,29 +3188,7 @@ async function handleAdminDealers(request: Request, db: ReturnType<typeof drizzl
     db.select({ value: count() }).from(users).where(conditions).get(),
     db.select().from(users).where(conditions).orderBy(desc(users.createdAt)).limit(limit).offset(offset).all(),
   ]);
-  const counts = await Promise.all(
-    rows.map(async (dealer) => {
-      const farmerCount = await db
-        .select({ value: count() })
-        .from(users)
-        .where(eq(users.dealerId, dealer.id))
-        .get();
-      const farmers = await db.select({ id: users.id }).from(users).where(eq(users.dealerId, dealer.id)).all();
-      const farmerIds = farmers.map((farmer) => farmer.id);
-      const livestockCount = farmerIds.length > 0
-        ? await db
-          .select({ value: count() })
-          .from(livestock)
-          .where(inArray(livestock.userId, farmerIds))
-          .get()
-        : null;
-
-      return {
-        farmerCount: farmerCount?.value ?? 0,
-        livestockCount: livestockCount?.value ?? 0,
-      };
-    }),
-  );
+  const counts = await Promise.all(rows.map((dealer) => dealerCounts(db, dealer.id)));
 
   return apiResponse(
     paginatedResponse(
@@ -3348,7 +3499,7 @@ async function handleAdminUpdateTagStatus(request: Request, db: ReturnType<typeo
 }
 
 async function handleAdminActivity(db: ReturnType<typeof drizzle>) {
-  const [recentScans, recentRegistrations, recentUsers] = await Promise.all([
+  const [recentScans, recentUsers] = await Promise.all([
     db
       .select({
         id: rfidScans.id,
@@ -3362,7 +3513,6 @@ async function handleAdminActivity(db: ReturnType<typeof drizzle>) {
       .orderBy(desc(rfidScans.scannedAt))
       .limit(5)
       .all(),
-    db.select().from(dealerRegistrations).orderBy(desc(dealerRegistrations.createdAt)).limit(5).all(),
     db.select().from(users).orderBy(desc(users.createdAt)).limit(5).all(),
   ]);
   const activity = [
@@ -3373,14 +3523,6 @@ async function handleAdminActivity(db: ReturnType<typeof drizzle>) {
       description: scan.readerId ? `Reader: ${scan.readerId}` : 'No reader linked',
       actor: scan.ownerName ?? undefined,
       createdAt: scan.scannedAt,
-    })),
-    ...recentRegistrations.map((registration) => ({
-      id: registration.id,
-      type: 'DEALER_REGISTRATION',
-      title: `${registration.orgName} requested access`,
-      description: registration.prefixRequested,
-      actor: registration.contact,
-      createdAt: registration.createdAt,
     })),
     ...recentUsers.map((row) => ({
       id: row.id,
@@ -3554,115 +3696,6 @@ async function handleUnlockTag(db: ReturnType<typeof drizzle>, rawEpc: string) {
   return apiResponse(tagRegistryResponse(updated!));
 }
 
-function dealerRegistrationResponse(row: typeof dealerRegistrations.$inferSelect) {
-  return {
-    id: row.id,
-    orgName: row.orgName,
-    contact: row.contact,
-    prefixRequested: row.prefixRequested,
-    status: row.status,
-    createdAt: row.createdAt,
-    decidedAt: row.decidedAt ?? undefined,
-  };
-}
-
-async function handleCreateDealerRegistration(
-  request: Request,
-  db: ReturnType<typeof drizzle>,
-  userId: string,
-) {
-  const input = await parseJson(request, dealerRegistrationInputSchema);
-  const existing = await db
-    .select()
-    .from(dealerRegistrations)
-    .where(eq(dealerRegistrations.requestedByUserId, userId))
-    .orderBy(desc(dealerRegistrations.createdAt))
-    .get();
-
-  if (existing?.status === 'PENDING' || existing?.status === 'APPROVED') {
-    throw new ApiFailure(409, 'Идэвхтэй хүсэлт өмнө нь бүртгэгдсэн байна.', 'REGISTRATION_EXISTS');
-  }
-
-  const id = createId('dealer');
-
-  await db.insert(dealerRegistrations).values({
-    id,
-    requestedByUserId: userId,
-    orgName: input.orgName.trim(),
-    contact: input.contact.trim(),
-    prefixRequested: input.prefixRequested.trim(),
-    status: 'PENDING',
-    createdAt: now(),
-  });
-
-  const created = await db
-    .select()
-    .from(dealerRegistrations)
-    .where(eq(dealerRegistrations.id, id))
-    .get();
-  return apiResponse(dealerRegistrationResponse(created!));
-}
-
-async function handleGetMyDealerRegistration(db: ReturnType<typeof drizzle>, userId: string) {
-  const registration = await db
-    .select()
-    .from(dealerRegistrations)
-    .where(eq(dealerRegistrations.requestedByUserId, userId))
-    .orderBy(desc(dealerRegistrations.createdAt))
-    .get();
-
-  return apiResponse(registration ? dealerRegistrationResponse(registration) : null);
-}
-
-async function handleListDealerRegistrations(db: ReturnType<typeof drizzle>) {
-  const rows = await db
-    .select()
-    .from(dealerRegistrations)
-    .orderBy(desc(dealerRegistrations.createdAt))
-    .all();
-  return apiResponse(rows.map(dealerRegistrationResponse));
-}
-
-async function handleDecideDealerRegistration(
-  request: Request,
-  db: ReturnType<typeof drizzle>,
-  registrationId: string,
-) {
-  const input = await parseJson(request, decideDealerRegistrationSchema);
-  const existing = await db
-    .select()
-    .from(dealerRegistrations)
-    .where(eq(dealerRegistrations.id, registrationId))
-    .get();
-
-  if (!existing) {
-    throw new ApiFailure(404, 'Хүсэлт олдсонгүй.', 'NOT_FOUND');
-  }
-
-  if (existing.status !== 'PENDING') {
-    throw new ApiFailure(409, 'Энэ хүсэлтийг өмнө шийдвэрлэсэн байна.', 'REGISTRATION_ALREADY_DECIDED');
-  }
-
-  await db
-    .update(dealerRegistrations)
-    .set({ status: input.status, decidedAt: now() })
-    .where(eq(dealerRegistrations.id, registrationId));
-
-  if (input.status === 'APPROVED') {
-    await db
-      .update(users)
-      .set({ role: 'DEALER', updatedAt: now() })
-      .where(eq(users.id, existing.requestedByUserId));
-  }
-
-  const updated = await db
-    .select()
-    .from(dealerRegistrations)
-    .where(eq(dealerRegistrations.id, registrationId))
-    .get();
-  return apiResponse(dealerRegistrationResponse(updated!));
-}
-
 function farmerResponse(row: typeof users.$inferSelect, livestockCount: number) {
   return {
     id: row.id,
@@ -3773,19 +3806,81 @@ async function handleAddFarmer(request: Request, db: ReturnType<typeof drizzle>,
   return apiResponse(farmerResponse(created!, 0));
 }
 
-async function handleRemoveFarmer(db: ReturnType<typeof drizzle>, dealerId: string, farmerId: string) {
-  const existing = await db
+async function getDealerFarmer(db: ReturnType<typeof drizzle>, dealerId: string, farmerId: string) {
+  const farmer = await db
     .select()
     .from(users)
-    .where(and(eq(users.id, farmerId), eq(users.dealerId, dealerId)))
+    .where(and(eq(users.id, farmerId), eq(users.role, 'FARMER'), eq(users.dealerId, dealerId)))
     .get();
 
-  if (!existing) {
+  if (!farmer) {
     throw new ApiFailure(404, 'Малчин олдсонгүй.', 'NOT_FOUND');
   }
 
-  await db.update(users).set({ dealerId: null, updatedAt: now() }).where(eq(users.id, farmerId));
-  return apiResponse({ id: farmerId, removed: true });
+  return farmer;
+}
+
+async function handleGetFarmer(db: ReturnType<typeof drizzle>, dealerId: string, farmerId: string) {
+  const farmer = await getDealerFarmer(db, dealerId, farmerId);
+  const livestockCount = await db
+    .select({ value: count() })
+    .from(livestock)
+    .where(eq(livestock.userId, farmer.id))
+    .get();
+
+  return apiResponse(farmerResponse(farmer, livestockCount?.value ?? 0));
+}
+
+async function handleUpdateFarmer(
+  request: Request,
+  db: ReturnType<typeof drizzle>,
+  dealerId: string,
+  farmerId: string,
+) {
+  const input = await parseJson(request, updateFarmerSchema);
+  const farmer = await getDealerFarmer(db, dealerId, farmerId);
+
+  if (input.phoneNumber && input.phoneNumber !== farmer.phoneNumber) {
+    const existing = await db.select().from(users).where(eq(users.phoneNumber, input.phoneNumber)).get();
+    if (existing) {
+      throw new ApiFailure(409, 'Энэ утасны дугаар бүртгэлтэй байна', 'PHONE_ALREADY_EXISTS');
+    }
+  }
+
+  await db
+    .update(users)
+    .set({
+      ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+      ...(input.phoneNumber !== undefined ? { phoneNumber: input.phoneNumber } : {}),
+      ...(input.aimag !== undefined ? { aimag: cleanOptionalText(input.aimag) } : {}),
+      ...(input.sum !== undefined ? { sum: cleanOptionalText(input.sum) } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      updatedAt: now(),
+    })
+    .where(eq(users.id, farmer.id));
+
+  const updated = await db.select().from(users).where(eq(users.id, farmer.id)).get();
+  const livestockCount = await db
+    .select({ value: count() })
+    .from(livestock)
+    .where(eq(livestock.userId, farmer.id))
+    .get();
+
+  return apiResponse(farmerResponse(updated!, livestockCount?.value ?? 0));
+}
+
+async function handleRemoveFarmer(db: ReturnType<typeof drizzle>, dealerId: string, farmerId: string) {
+  const farmer = await getDealerFarmer(db, dealerId, farmerId);
+
+  await db
+    .update(users)
+    .set({
+      dealerId: null,
+      updatedAt: now(),
+    })
+    .where(eq(users.id, farmer.id));
+
+  return apiResponse({ removed: true, id: farmer.id });
 }
 
 async function handleUpload(request: Request) {
@@ -3857,6 +3952,46 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
     return handleLogout(db, user);
   }
 
+  if (request.method === 'GET' && path === '/api/dealer/farmers') {
+    if (user.role !== 'DEALER') {
+      throw new ApiFailure(403, 'Гэрээт эрх шаардлагатай.', 'FORBIDDEN');
+    }
+
+    return handleListFarmers(request, db, user.id);
+  }
+
+  if (request.method === 'POST' && path === '/api/dealer/farmers') {
+    if (user.role !== 'DEALER') {
+      throw new ApiFailure(403, 'Гэрээт эрх шаардлагатай.', 'FORBIDDEN');
+    }
+
+    return handleAddFarmer(request, db, user.id);
+  }
+
+  const dealerFarmerMatch = path.match(/^\/api\/dealer\/farmers\/([^/]+)$/);
+
+  if (dealerFarmerMatch) {
+    if (user.role !== 'DEALER') {
+      throw new ApiFailure(403, 'Гэрээт эрх шаардлагатай.', 'FORBIDDEN');
+    }
+
+    if (request.method === 'GET') {
+      return handleGetFarmer(db, user.id, dealerFarmerMatch[1]);
+    }
+
+    if (request.method === 'PATCH') {
+      return handleUpdateFarmer(request, db, user.id, dealerFarmerMatch[1]);
+    }
+
+    if (request.method === 'DELETE') {
+      return handleRemoveFarmer(db, user.id, dealerFarmerMatch[1]);
+    }
+  }
+
+  if (user.role === 'DEALER') {
+    throw new ApiFailure(403, 'Борлуулагч зөвхөн өөрийн малчдыг удирдах эрхтэй.', 'FORBIDDEN');
+  }
+
   if (request.method === 'GET' && path === '/api/dashboard') {
     return handleDashboard(db, user.id);
   }
@@ -3904,6 +4039,30 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
     return handleAdminDealers(request, db);
   }
 
+  if (request.method === 'POST' && path === '/api/admin/dealers') {
+    requireAdmin(user);
+    return handleAdminCreateDealer(request, db);
+  }
+
+  const adminDealerFarmersMatch = path.match(/^\/api\/admin\/dealers\/([^/]+)\/farmers$/);
+
+  if (adminDealerFarmersMatch && request.method === 'GET') {
+    requireAdmin(user);
+    return handleAdminDealerFarmers(request, db, adminDealerFarmersMatch[1]);
+  }
+
+  const adminDealerMatch = path.match(/^\/api\/admin\/dealers\/([^/]+)$/);
+
+  if (adminDealerMatch) {
+    requireAdmin(user);
+    if (request.method === 'GET') {
+      return handleAdminGetDealer(db, adminDealerMatch[1]);
+    }
+    if (request.method === 'PATCH') {
+      return handleAdminUpdateDealer(request, db, adminDealerMatch[1]);
+    }
+  }
+
   if (request.method === 'GET' && path === '/api/admin/livestock') {
     requireAdmin(user);
     return handleAdminLivestock(request, db);
@@ -3930,47 +4089,12 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
   }
 
   if (request.method === 'GET' && path === '/api/admin/tags') {
-    if (user.role !== 'ADMIN') {
-      throw new ApiFailure(403, 'Админ эрх шаардлагатай.', 'FORBIDDEN');
-    }
-
+    requireAdmin(user);
     return handleListTags(db);
   }
 
   if (request.method === 'POST' && path === '/api/rfid/tags/claim') {
     return handleClaimTag(request, db, user.id);
-  }
-
-  if (request.method === 'GET' && path === '/api/admin/dealer-registrations') {
-    if (user.role !== 'ADMIN') {
-      throw new ApiFailure(403, 'Админ эрх шаардлагатай.', 'FORBIDDEN');
-    }
-
-    return handleListDealerRegistrations(db);
-  }
-
-  if (request.method === 'POST' && path === '/api/dealer-registrations') {
-    return handleCreateDealerRegistration(request, db, user.id);
-  }
-
-  if (request.method === 'GET' && path === '/api/dealer-registrations/me') {
-    return handleGetMyDealerRegistration(db, user.id);
-  }
-
-  if (request.method === 'GET' && path === '/api/dealer/farmers') {
-    if (user.role !== 'DEALER') {
-      throw new ApiFailure(403, 'Гэрээт эрх шаардлагатай.', 'FORBIDDEN');
-    }
-
-    return handleListFarmers(request, db, user.id);
-  }
-
-  if (request.method === 'POST' && path === '/api/dealer/farmers') {
-    if (user.role !== 'DEALER') {
-      throw new ApiFailure(403, 'Гэрээт эрх шаардлагатай.', 'FORBIDDEN');
-    }
-
-    return handleAddFarmer(request, db, user.id);
   }
 
   if (request.method === 'GET' && path === '/api/alerts') {
@@ -4076,26 +4200,6 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
 
   if (tagGetMatch && request.method === 'GET') {
     return handleGetTag(db, decodeURIComponent(tagGetMatch[1]));
-  }
-
-  const dealerRegistrationDecisionMatch = path.match(/^\/api\/admin\/dealer-registrations\/([^/]+)$/);
-
-  if (dealerRegistrationDecisionMatch && request.method === 'PATCH') {
-    if (user.role !== 'ADMIN') {
-      throw new ApiFailure(403, 'Админ эрх шаардлагатай.', 'FORBIDDEN');
-    }
-
-    return handleDecideDealerRegistration(request, db, dealerRegistrationDecisionMatch[1]);
-  }
-
-  const dealerFarmerMatch = path.match(/^\/api\/dealer\/farmers\/([^/]+)$/);
-
-  if (dealerFarmerMatch && request.method === 'DELETE') {
-    if (user.role !== 'DEALER') {
-      throw new ApiFailure(403, 'Гэрээт эрх шаардлагатай.', 'FORBIDDEN');
-    }
-
-    return handleRemoveFarmer(db, user.id, dealerFarmerMatch[1]);
   }
 
   const livestockMatch = path.match(/^\/api\/livestock\/([^/]+)$/);

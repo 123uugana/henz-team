@@ -8,8 +8,6 @@ import {
   Trash2,
   DoorOpen,
   Lock,
-  MapPin,
-  Navigation,
   Pencil,
   TriangleAlert,
   Unlock,
@@ -28,7 +26,6 @@ import {
   getLivestockScans,
   getTag,
   updateLivestock,
-  updateLivestockLocation,
   updateLivestockStatus,
   uploadImage,
   type TagRegistryEntry,
@@ -55,7 +52,7 @@ const TAG_STATUS_TONE: Record<TagStatus, string> = {
 export default function AnimalDetailPage() {
   const params = useParams<{ id: string }>();
   // Remount whenever the route's :id changes, so no per-animal local state
-  // (tag lookup, GPS status, upload state) can leak from one animal to another.
+  // (tag lookup or upload state) can leak from one animal to another.
   return <AnimalDetailContent key={params.id} id={params.id} />;
 }
 
@@ -85,8 +82,7 @@ function AnimalDetailContent({ id }: { id: string }) {
     };
   }, [animal?.rfidTag]);
 
-  const [locating, setLocating] = useState(false);
-  const [locateError, setLocateError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -130,7 +126,7 @@ function AnimalDetailContent({ id }: { id: string }) {
       });
       refresh();
     } catch (err) {
-      setLocateError(err instanceof ApiError ? err.message : "Зураг хадгалж чадсангүй.");
+      setActionError(err instanceof ApiError ? err.message : "Зураг хадгалж чадсангүй.");
     } finally {
       setUploading(false);
     }
@@ -139,13 +135,13 @@ function AnimalDetailContent({ id }: { id: string }) {
   const handleDelete = async () => {
     if (!window.confirm(`${animal.earNumber} дугаартай малыг бүртгэлээс устгах уу?`)) return;
     setDeleting(true);
-    setLocateError(null);
+    setActionError(null);
 
     try {
       await deleteLivestock(animal.id);
       router.replace("/animals");
     } catch (err) {
-      setLocateError(err instanceof ApiError ? err.message : "Устгаж чадсангүй.");
+      setActionError(err instanceof ApiError ? err.message : "Устгаж чадсангүй.");
       setDeleting(false);
     }
   };
@@ -153,38 +149,6 @@ function AnimalDetailContent({ id }: { id: string }) {
   const toggleMissing = async () => {
     await updateLivestockStatus(animal.id, animal.status === "MISSING" ? "ACTIVE" : "MISSING");
     refresh();
-  };
-
-  const handleLocate = () => {
-    if (!navigator.geolocation) {
-      setLocateError("Энэ төхөөрөмж байршил тогтоох боломжгүй байна.");
-      return;
-    }
-
-    setLocating(true);
-    setLocateError(null);
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        try {
-          await updateLivestockLocation(
-            animal.id,
-            position.coords.latitude,
-            position.coords.longitude
-          );
-          refresh();
-        } catch (err) {
-          setLocateError(err instanceof ApiError ? err.message : "Байршил хадгалж чадсангүй.");
-        } finally {
-          setLocating(false);
-        }
-      },
-      () => {
-        setLocateError("Байршил авах боломжгүй байна. Зөвшөөрлөө шалгана уу.");
-        setLocating(false);
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
   };
 
   return (
@@ -261,6 +225,9 @@ function AnimalDetailContent({ id }: { id: string }) {
               ? "Олдсон гэж тэмдэглэх"
               : "Дутуу гэж тэмдэглэх"}
           </Button>
+          {actionError ? (
+            <p className="text-sm text-red-600 dark:text-red-400">{actionError}</p>
+          ) : null}
         </div>
 
         {animal.rfidTag ? (
@@ -283,36 +250,6 @@ function AnimalDetailContent({ id }: { id: string }) {
             </Card>
           </div>
         ) : null}
-
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-700 dark:text-gray-300">Байршил</h2>
-            <button
-              type="button"
-              onClick={handleLocate}
-              disabled={locating}
-              className="flex items-center gap-1 text-xs font-medium text-[#a85b0a] dark:text-[#f2a93c] disabled:opacity-50"
-            >
-              <Navigation className="size-3.5" />
-              {locating ? "Тогтоож байна..." : "GPS-ээс авах"}
-            </button>
-          </div>
-          <Card className="gap-2 bg-white dark:bg-[#141a2c] p-4 ring-1 ring-slate-200/80 dark:ring-white/5">
-            <div className="flex items-center gap-2 text-sm">
-              <MapPin className="size-4 shrink-0 text-[#a85b0a] dark:text-[#f2a93c]" />
-              {animal.location ? (
-                <span>
-                  {animal.location.latitude.toFixed(5)}, {animal.location.longitude.toFixed(5)}
-                </span>
-              ) : (
-                <span className="text-slate-500 dark:text-gray-400">Байршил тодорхойгүй байна.</span>
-              )}
-            </div>
-            {locateError ? (
-              <p className="text-xs text-red-600 dark:text-red-400">{locateError}</p>
-            ) : null}
-          </Card>
-        </div>
 
         {scans && scans.length > 0 ? (
           <div className="flex flex-col gap-3">

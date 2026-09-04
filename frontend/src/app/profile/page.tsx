@@ -2,8 +2,7 @@
 
 import { useRef, useState, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { BadgeCheck, Building2, Camera, LogOut, User } from "lucide-react";
+import { BadgeCheck, Camera, LogOut, User } from "lucide-react";
 import { PhoneFrame } from "@/components/phone-frame";
 import { AppHeader } from "@/components/app-header";
 import {

@@ -949,7 +949,7 @@ describe('admin', () => {
     expect(res.body.code).toBe('FORBIDDEN');
   });
 
-  it('rejects non-admins from the tag registry and dealer registration endpoints', async () => {
+  it('rejects non-admins from the tag registry and admin dealer endpoints', async () => {
     const tokens = await registerAndLogin('99245566');
     const auth = tokens.accessToken;
 
@@ -959,14 +959,6 @@ describe('admin', () => {
     const unlock = await api('/api/admin/tags/HH-0001/unlock', { method: 'PATCH', headers: { Authorization: `Bearer ${auth}` } });
     expect(unlock.status).toBe(403);
 
-    const registrations = await api('/api/admin/dealer-registrations', authorized(auth));
-    expect(registrations.status).toBe(403);
-
-    const decide = await api(
-      '/api/admin/dealer-registrations/does-not-exist',
-      json('PATCH', { status: 'APPROVED' }, auth),
-    );
-    expect(decide.status).toBe(403);
   });
 
   it('rejects non-admins from system-wide admin list endpoints', async () => {
@@ -1289,74 +1281,86 @@ describe('rfid tag registry', () => {
   });
 });
 
-describe('dealer registrations', () => {
-  it('creates a pending request', async () => {
-    const tokens = await registerAndLogin('99267711');
-    const res = await api(
-      '/api/dealer-registrations',
-      json(
-        'POST',
-        { orgName: 'Баянгол Малын Хоршоо', contact: 'Б.Дамдин, 9911-2233', prefixRequested: 'EXT-' },
-        tokens.accessToken,
-      ),
-    );
-    expect(res.status).toBe(200);
-    expect(res.body.data.status).toBe('PENDING');
-    expect(res.body.data.orgName).toBe('Баянгол Малын Хоршоо');
-
-    const mine = await api('/api/dealer-registrations/me', authorized(tokens.accessToken));
-    expect(mine.status).toBe(200);
-    expect(mine.body.data.id).toBe(res.body.data.id);
-
-    const duplicate = await api(
-      '/api/dealer-registrations',
-      json('POST', { orgName: 'Давхардсан', contact: '1', prefixRequested: 'DUP-' }, tokens.accessToken),
-    );
-    expect(duplicate.status).toBe(409);
-    expect(duplicate.body.code).toBe('REGISTRATION_EXISTS');
-  });
-
-  it('rejects an incomplete request', async () => {
-    const tokens = await registerAndLogin('99278811');
-    const res = await api(
-      '/api/dealer-registrations',
-      json('POST', { orgName: '', contact: '', prefixRequested: '' }, tokens.accessToken),
-    );
-    expect(res.status).toBe(400);
-  });
-
-  it('promotes the requester to DEALER when an admin approves the request', async () => {
-    const requester = await registerAndLogin('99430011');
-    const registration = await api(
-      '/api/dealer-registrations',
-      json(
-        'POST',
-        { orgName: 'Хэнтий хоршоо', contact: '99430011', prefixRequested: 'EXT-' },
-        requester.accessToken,
-      ),
-    );
-
+describe('admin-created dealers', () => {
+  it('lets admins create an active dealer by phone number', async () => {
     const admin = await registerAndLogin('99430022');
     await makeAdmin(admin.user.id);
-    const decided = await api(
-      `/api/admin/dealer-registrations/${registration.body.data.id}`,
-      json('PATCH', { status: 'APPROVED' }, admin.accessToken),
+
+    const created = await api(
+      '/api/admin/dealers',
+      json('POST', { phoneNumber: '99430011', name: 'Seller One', aimag: 'Tuv', sum: 'Zuunmod' }, admin.accessToken),
     );
-    expect(decided.status).toBe(200);
-    expect(decided.body.data.status).toBe('APPROVED');
 
-    const me = await api('/api/auth/me', authorized(requester.accessToken));
-    expect(me.body.data.role).toBe('DEALER');
+    expect(created.status).toBe(201);
+    expect(created.body.data).toMatchObject({
+      phoneNumber: '99430011',
+      name: 'Seller One',
+      role: 'DEALER',
+      status: 'ACTIVE',
+      farmerCount: 0,
+    });
 
-    const dealerFarmers = await api('/api/dealer/farmers', authorized(requester.accessToken));
-    expect(dealerFarmers.status).toBe(200);
+    const sellerOtp = await api('/api/auth/send-otp', json('POST', { phoneNumber: '99430011', mode: 'seller' }));
+    expect(sellerOtp.status).toBe(200);
 
-    const repeated = await api(
-      `/api/admin/dealer-registrations/${registration.body.data.id}`,
-      json('PATCH', { status: 'REJECTED' }, admin.accessToken),
+    const login = await api('/api/auth/verify-otp', json('POST', { phoneNumber: '99430011', code: OTP_CODE, mode: 'seller' }));
+    expect(login.status).toBe(200);
+    expect(login.body.data.user.role).toBe('DEALER');
+    expect(login.body.data.requiresProfileSetup).toBe(false);
+  });
+
+  it('rejects duplicate seller phone numbers with a clear validation message', async () => {
+    const admin = await registerAndLogin('99430033');
+    await makeAdmin(admin.user.id);
+
+    await api('/api/admin/dealers', json('POST', { phoneNumber: '99430044', name: 'Seller A' }, admin.accessToken));
+    const duplicate = await api('/api/admin/dealers', json('POST', { phoneNumber: '99430044', name: 'Seller B' }, admin.accessToken));
+
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body.message).toBe('Энэ утасны дугаар бүртгэлтэй байна');
+    expect(duplicate.body.code).toBe('PHONE_ALREADY_EXISTS');
+  });
+
+  it('rejects seller login for unregistered and suspended phone numbers', async () => {
+    const missing = await api('/api/auth/send-otp', json('POST', { phoneNumber: '99430055', mode: 'seller' }));
+    expect(missing.status).toBe(404);
+    expect(missing.body.message).toBe('Таны дугаар системд бүртгэлгүй байна. Админтай холбогдоно уу.');
+
+    const admin = await registerAndLogin('99430066');
+    await makeAdmin(admin.user.id);
+    const seller = await api('/api/admin/dealers', json('POST', { phoneNumber: '99430077', name: 'Suspended Seller' }, admin.accessToken));
+    await api(`/api/admin/users/${seller.body.data.id}/status`, json('PATCH', { status: 'SUSPENDED' }, admin.accessToken));
+
+    const suspended = await api('/api/auth/send-otp', json('POST', { phoneNumber: '99430077', mode: 'seller' }));
+    expect(suspended.status).toBe(403);
+    expect(suspended.body.code).toBe('USER_SUSPENDED');
+  });
+
+  it('lets admins edit sellers and inspect their owned farmers', async () => {
+    const admin = await registerAndLogin('99430088');
+    await makeAdmin(admin.user.id);
+
+    const sellerA = await api('/api/admin/dealers', json('POST', { phoneNumber: '99430089', name: 'Seller A' }, admin.accessToken));
+    await api('/api/admin/dealers', json('POST', { phoneNumber: '99430090', name: 'Seller B' }, admin.accessToken));
+
+    await api('/api/auth/send-otp', json('POST', { phoneNumber: '99430089', mode: 'seller' }));
+    const sellerALogin = await api('/api/auth/verify-otp', json('POST', { phoneNumber: '99430089', code: OTP_CODE, mode: 'seller' }));
+    await api('/api/dealer/farmers', json('POST', { phoneNumber: '99430091', name: 'Farmer A1' }, sellerALogin.body.data.accessToken));
+    await api('/api/auth/send-otp', json('POST', { phoneNumber: '99430090', mode: 'seller' }));
+    const sellerBLogin = await api('/api/auth/verify-otp', json('POST', { phoneNumber: '99430090', code: OTP_CODE, mode: 'seller' }));
+    await api('/api/dealer/farmers', json('POST', { phoneNumber: '99430092', name: 'Farmer B1' }, sellerBLogin.body.data.accessToken));
+
+    const updatedSeller = await api(
+      `/api/admin/dealers/${sellerA.body.data.id}`,
+      json('PATCH', { name: 'Seller A Updated', aimag: 'Khentii' }, admin.accessToken),
     );
-    expect(repeated.status).toBe(409);
-    expect(repeated.body.code).toBe('REGISTRATION_ALREADY_DECIDED');
+    expect(updatedSeller.status).toBe(200);
+    expect(updatedSeller.body.data.name).toBe('Seller A Updated');
+
+    const farmers = await api(`/api/admin/dealers/${sellerA.body.data.id}/farmers`, authorized(admin.accessToken));
+    expect(farmers.status).toBe(200);
+    expect(farmers.body.data.items).toHaveLength(1);
+    expect(farmers.body.data.items[0].phoneNumber).toBe('99430091');
   });
 });
 
@@ -1376,6 +1380,18 @@ describe('dealer farmers', () => {
 
     const remove = await api('/api/dealer/farmers/does-not-exist', { method: 'DELETE', headers: { Authorization: `Bearer ${auth}` } });
     expect(remove.status).toBe(403);
+  });
+
+  it('blocks dealers from farmer app endpoints', async () => {
+    const dealerTokens = await registerAndLogin('99319900');
+    await makeDealer(dealerTokens.user.id);
+    const auth = dealerTokens.accessToken;
+
+    for (const endpoint of ['/api/dashboard', '/api/livestock', '/api/alerts']) {
+      const res = await api(endpoint, authorized(auth));
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('FORBIDDEN');
+    }
   });
 
   it('adds a new farmer by phone number and lists it back', async () => {
@@ -1405,6 +1421,36 @@ describe('dealer farmers', () => {
     const farmerLogin = await registerAndLogin('99334455');
     expect(farmerLogin.requiresProfileSetup).toBe(false);
     expect(farmerLogin.user.name).toBe('Б.Дорж');
+  });
+
+  it('lets a dealer update and suspend only their own farmers', async () => {
+    const dealerA = await registerAndLogin('99324455');
+    await makeDealer(dealerA.user.id);
+    const dealerB = await registerAndLogin('99325566');
+    await makeDealer(dealerB.user.id);
+
+    const added = await api(
+      '/api/dealer/farmers',
+      json('POST', { phoneNumber: '99326677', name: 'Original Name', aimag: 'Tuv' }, dealerA.accessToken),
+    );
+    const farmerId = added.body.data.id;
+
+    const updated = await api(
+      `/api/dealer/farmers/${farmerId}`,
+      json('PATCH', { name: 'Updated Name', sum: 'Sergelen', status: 'SUSPENDED' }, dealerA.accessToken),
+    );
+    expect(updated.status).toBe(200);
+    expect(updated.body.data).toMatchObject({
+      name: 'Updated Name',
+      sum: 'Sergelen',
+      status: 'SUSPENDED',
+    });
+
+    const otherDealer = await api(
+      `/api/dealer/farmers/${farmerId}`,
+      json('PATCH', { name: 'Wrong Seller' }, dealerB.accessToken),
+    );
+    expect(otherDealer.status).toBe(404);
   });
 
   it('links an already-registered farmer instead of duplicating them', async () => {
@@ -1441,10 +1487,12 @@ describe('dealer farmers', () => {
     expect(res.body.code).toBe('FARMER_ALREADY_LINKED');
   });
 
-  it('removes a farmer by unlinking without deleting the user', async () => {
+  it('lets a dealer unlink only their own farmers without deleting the account', async () => {
     const dealerTokens = await registerAndLogin('99390011');
     await makeDealer(dealerTokens.user.id);
     const auth = dealerTokens.accessToken;
+    const otherDealer = await registerAndLogin('99390012');
+    await makeDealer(otherDealer.user.id);
 
     const added = await api(
       '/api/dealer/farmers',
@@ -1452,29 +1500,21 @@ describe('dealer farmers', () => {
     );
     const farmerId = added.body.data.id;
 
+    const otherRemove = await api(`/api/dealer/farmers/${farmerId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${otherDealer.accessToken}` },
+    });
+    expect(otherRemove.status).toBe(404);
+
     const removed = await api(`/api/dealer/farmers/${farmerId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${auth}` } });
     expect(removed.status).toBe(200);
-    expect(removed.body.data.removed).toBe(true);
+    expect(removed.body.data).toEqual({ removed: true, id: farmerId });
 
     const list = await api('/api/dealer/farmers', authorized(auth));
     expect(list.body.data.items).toHaveLength(0);
 
     const farmerLogin = await registerAndLogin('99301122');
-    expect(farmerLogin.user.name).toBe('Х.Мөнх');
-  });
-
-  it('returns 404 when removing a farmer not managed by this dealer', async () => {
-    const dealerA = await registerAndLogin('99312244');
-    await makeDealer(dealerA.user.id);
-    const added = await api(
-      '/api/dealer/farmers',
-      json('POST', { phoneNumber: '99323355', name: 'Farmer' }, dealerA.accessToken),
-    );
-    const farmerId = added.body.data.id;
-
-    const dealerB = await registerAndLogin('99334466');
-    await makeDealer(dealerB.user.id);
-    const res = await api(`/api/dealer/farmers/${farmerId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${dealerB.accessToken}` } });
-    expect(res.status).toBe(404);
+    expect(farmerLogin.user.id).toBe(farmerId);
+    expect(farmerLogin.user.role).toBe('FARMER');
   });
 });

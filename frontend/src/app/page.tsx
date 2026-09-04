@@ -21,14 +21,16 @@ export default function SplashPage() {
         </div>
       </div>
 
-      <Button
-        variant="brand"
-        size="xl"
-        className="w-full"
-        render={<Link href="/phone" />}
-      >
-        Эхлэх
-      </Button>
+      <div className="flex w-full flex-col gap-3">
+        <Button
+          variant="brand"
+          size="xl"
+          className="w-full"
+          render={<Link href="/phone" />}
+        >
+          Эхлэх
+        </Button>
+      </div>
     </PhoneFrame>
   );
 }

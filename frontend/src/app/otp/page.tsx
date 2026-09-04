@@ -29,6 +29,8 @@ function OtpVerificationForm() {
   const searchParams = useSearchParams();
   const phone = searchParams.get("phone") ?? "";
   const devCode = searchParams.get("code");
+  const mode = searchParams.get("mode");
+  const isDealerLogin = mode === "seller" || mode === "dealer";
 
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
@@ -54,13 +56,20 @@ function OtpVerificationForm() {
     setError(null);
 
     try {
-      const result = await verifyOtp(phone, value);
+      const result = await verifyOtp(phone, value, isDealerLogin ? "seller" : undefined);
+      if (isDealerLogin && result.user.role !== "DEALER") {
+        setCode("");
+        setError("Энэ дугаар борлуулагчийн эрхгүй байна.");
+        setLoading(false);
+        return;
+      }
+
       saveSession(result);
 
       if (result.requiresProfileSetup) {
         router.push("/herd-setup");
       } else if (result.user.role === "DEALER") {
-        router.push("/dealer/farmers");
+        router.push("/dealer");
       } else {
         router.push("/dashboard");
       }
@@ -79,9 +88,12 @@ function OtpVerificationForm() {
     setError(null);
 
     try {
-      const result = await sendOtp(phone);
+      const result = await sendOtp(phone, isDealerLogin ? "seller" : undefined);
       if (result.code) {
         const query = new URLSearchParams({ phone, code: result.code });
+        if (isDealerLogin) {
+          query.set("mode", "seller");
+        }
         router.replace(`/otp?${query.toString()}`);
       }
       setResendSeconds(RESEND_COOLDOWN_SECONDS);

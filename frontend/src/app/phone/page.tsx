@@ -1,7 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 import { MessageSquareText } from "lucide-react";
 import { PhoneFrame } from "@/components/phone-frame";
 import { BackButton } from "@/components/back-button";
@@ -13,7 +13,18 @@ const PHONE_LENGTH = 8;
 const VERIFIED_PHONE = "80163296";
 
 export default function PhoneEntryPage() {
+  return (
+    <Suspense fallback={<PhoneFrame showThemeToggle>{null}</PhoneFrame>}>
+      <PhoneEntryForm />
+    </Suspense>
+  );
+}
+
+function PhoneEntryForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const mode = searchParams.get("mode");
+  const isDealerLogin = mode === "seller" || mode === "dealer";
   const [phone, setPhone] = useState(VERIFIED_PHONE);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,9 +36,12 @@ export default function PhoneEntryPage() {
     setError(null);
     console.log("OTP ");
     try {
-      const result = await sendOtp(phone);
+      const result = await sendOtp(phone, isDealerLogin ? "seller" : undefined);
       console.log("OTP sent successfully" + phone);
       const query = new URLSearchParams({ phone });
+      if (isDealerLogin) {
+        query.set("mode", "seller");
+      }
       if (result.code) {
         query.set("code", result.code);
       }
@@ -48,10 +62,12 @@ export default function PhoneEntryPage() {
 
       <div className="mt-8 flex flex-col gap-2">
         <h1 className="text-xl font-bold leading-snug">
-          Утасны дугаараа оруулна уу
+          {isDealerLogin ? "Борлуулагч нэвтрэх" : "Утасны дугаараа оруулна уу"}
         </h1>
         <p className="text-sm text-slate-500 dark:text-gray-400">
-          Баталгаажсан дугаар руу баталгаажуулах код илгээх болно.
+          {isDealerLogin
+            ? "Борлуулагчийн бүртгэлтэй дугаараар баталгаажуулах код авна."
+            : "Баталгаажсан дугаар руу баталгаажуулах код илгээх болно."}
         </p>
       </div>
 

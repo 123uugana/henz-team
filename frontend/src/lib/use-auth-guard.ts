@@ -1,18 +1,22 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { getSession } from "@/lib/session";
 
-/** Redirects to /phone if there's no signed-in session. */
+/** Redirects to /phone if signed out, or the dealer area for DEALER users. */
 export function useAuthGuard() {
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
-    if (!getSession()) {
+    const session = getSession();
+    if (!session) {
       router.replace("/phone");
+    } else if (session.user.role === "DEALER" && !pathname.startsWith("/dealer")) {
+      router.replace("/dealer");
     }
-  }, [router]);
+  }, [pathname, router]);
 }
 
 /** Redirects to /phone if signed out, or /dashboard if signed in without the DEALER role. */

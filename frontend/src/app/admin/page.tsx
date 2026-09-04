@@ -16,7 +16,6 @@ export default function AdminDashboardPage() {
     missingCount: 0,
     unknownTagCount: 0,
     readerCount: 0,
-    pendingDealerRegistrationCount: 0,
     damagedTagCount: 0,
     missingLivestock: [],
     recentUsers: [],
@@ -38,7 +37,7 @@ export default function AdminDashboardPage() {
         <StatTile icon={<PawPrint className="size-5" />} label="Нийт бүртгэлтэй мал" value={loading ? "..." : stats.totalLivestock.toLocaleString()} tone="warning" />
         <StatTile icon={<RadioTower className="size-5" />} label="Нийт антенна/gate" value={String(stats.readerCount ?? 0)} meta={`${offlineDevices.length} offline`} tone="success" />
         <StatTile icon={<AlertTriangle className="size-5" />} label="Дутуу мал" value={String(stats.missingCount)} meta={`${stats.scannedToday} scans today`} tone="danger" />
-        <StatTile icon={<Tags className="size-5" />} label="Хүлээгдэж буй хүсэлт" value={String(stats.pendingDealerRegistrationCount ?? 0)} tone="warning" />
+        <StatTile icon={<Tags className="size-5" />} label="Гэмтэлтэй tag" value={String(stats.damagedTagCount ?? 0)} tone="warning" />
       </div>
 
       <div className="mt-7 grid gap-6 xl:grid-cols-[1fr_320px]">

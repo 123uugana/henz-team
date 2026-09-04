@@ -6,7 +6,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import {
   Bell,
-  Boxes,
   CircleHelp,
   Download,
   Grid2X2,
@@ -33,7 +32,6 @@ const navItems = [
   { href: "/admin/devices", label: "Төхөөрөмж/Антенна", icon: RadioTower },
   { href: "/admin/tags", label: "Tag удирдлага", icon: Tags },
   { href: "/admin/settings", label: "Tag тохиргоо", icon: Settings },
-  { href: "/admin/registrations", label: "Гадаад бүртгэл", icon: Boxes },
 ];
 
 const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -371,9 +369,9 @@ function UtilityPanel({
           {[
             ["3 offline gate байна", "Devices хэсэгт шалгана"],
             ["48 tag хүсэлт хүлээгдэж байна", "Tag inventory дээр шийднэ"],
-            ["Гадаад байгууллагын хүсэлт ирсэн", "Approvals хэсэгт нээнэ"],
+            ["Шинэ борлуулагч нэмэх", "Admin-аас seller account үүсгэнэ"],
           ].map(([main, sub]) => (
-            <button key={main} type="button" onClick={() => onNavigate(main.includes("gate") ? "/admin/devices" : main.includes("tag") ? "/admin/tags" : "/admin/registrations")} className="block w-full px-4 py-3 text-left hover:bg-[#202b48]">
+            <button key={main} type="button" onClick={() => onNavigate(main.includes("gate") ? "/admin/devices" : main.includes("tag") ? "/admin/tags" : "/admin/dealers")} className="block w-full px-4 py-3 text-left hover:bg-[#202b48]">
               <span className="block text-sm font-semibold text-[#e7ecff]">{main}</span>
               <span className="mt-1 block text-xs text-[#9faabe]">{sub}</span>
             </button>

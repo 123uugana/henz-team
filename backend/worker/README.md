@@ -94,13 +94,17 @@ POST  /api/uploads                  upload a livestock image
 GET   /api/rfid/tags/:epc           tag lifecycle status (AVAILABLE if unseen)
 POST  /api/rfid/tags/claim          claim/lock a tag for the current user
 
-POST  /api/dealer-registrations           request a prefix for an outside org
-GET   /api/admin/dealer-registrations     list requests (ADMIN only)
-PATCH /api/admin/dealer-registrations/:id approve/reject (ADMIN only)
-
 GET   /api/dealer/farmers           list my managed farmers (DEALER only; ?search=, ?aimag=, ?page=, ?limit=)
 POST  /api/dealer/farmers           add a farmer by phone (links existing user or creates one) (DEALER only)
-DELETE /api/dealer/farmers/:id      unlink a farmer from me, does not delete the user (DEALER only)
+GET   /api/dealer/farmers/:id       get one of my managed farmers (DEALER only)
+PATCH /api/dealer/farmers/:id       update or suspend one of my managed farmers (DEALER only)
+DELETE /api/dealer/farmers/:id      unlink one of my managed farmers without deleting their account (DEALER only)
+
+GET   /api/admin/dealers            list dealers (ADMIN only)
+POST  /api/admin/dealers            create an active dealer/seller by phone (ADMIN only)
+GET   /api/admin/dealers/:id        dealer detail with ownership counts (ADMIN only)
+PATCH /api/admin/dealers/:id        update or suspend a dealer (ADMIN only)
+GET   /api/admin/dealers/:id/farmers list farmers created by a dealer (ADMIN only)
 
 GET   /api/admin/statistics         system-wide stats (ADMIN only)
 GET   /api/admin/tags               all tags in the registry (ADMIN only)

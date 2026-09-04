@@ -179,10 +179,10 @@ export interface VerifyOtpResult {
   requiresProfileSetup: boolean;
 }
 
-export async function sendOtp(phoneNumber: string) {
+export async function sendOtp(phoneNumber: string, mode?: "seller" | "dealer") {
   const result = await apiFetch<{ phoneNumber: string; code?: string }>(
     "/api/auth/send-otp",
-    { method: "POST", body: JSON.stringify({ phoneNumber }) },
+    { method: "POST", body: JSON.stringify({ phoneNumber, ...(mode ? { mode } : {}) }) },
   );
 
   if (result.code) {
@@ -193,10 +193,10 @@ export async function sendOtp(phoneNumber: string) {
   return result;
 }
 
-export function verifyOtp(phoneNumber: string, code: string) {
+export function verifyOtp(phoneNumber: string, code: string, mode?: "seller" | "dealer") {
   return apiFetch<VerifyOtpResult>("/api/auth/verify-otp", {
     method: "POST",
-    body: JSON.stringify({ phoneNumber, code }),
+    body: JSON.stringify({ phoneNumber, code, ...(mode ? { mode } : {}) }),
   });
 }
 
@@ -476,8 +476,6 @@ export interface AdminStatistics {
   missingCount: number;
   unknownTagCount: number;
   readerCount?: number;
-  dealerRegistrationCount?: number;
-  pendingDealerRegistrationCount?: number;
   damagedTagCount?: number;
   missingLivestock: Array<{
     id: string;
@@ -578,7 +576,7 @@ export interface AdminTagPrefix {
 
 export interface AdminActivity {
   id: string;
-  type: "SCAN" | "DEALER_REGISTRATION" | "USER";
+  type: "SCAN" | "USER";
   title: string;
   description: string;
   actor?: string;
@@ -615,6 +613,18 @@ export function createAdminUser(input: { email: string; name?: string }) {
   });
 }
 
+export function createAdminDealer(input: {
+  phoneNumber: string;
+  name: string;
+  aimag?: string;
+  sum?: string;
+}) {
+  return authorizedFetch<AdminDealer>("/api/admin/dealers", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export function listAdminDealers(params: {
   search?: string;
   status?: "ACTIVE" | "SUSPENDED";
@@ -624,6 +634,34 @@ export function listAdminDealers(params: {
   return authorizedFetch<PaginatedResult<AdminDealer>>(
     `/api/admin/dealers?${queryString(params)}`,
   );
+}
+
+export function getAdminDealer(id: string) {
+  return authorizedFetch<AdminDealer>(`/api/admin/dealers/${id}`);
+}
+
+export function updateAdminDealer(
+  id: string,
+  input: { phoneNumber?: string; name?: string; aimag?: string | null; sum?: string | null },
+) {
+  return authorizedFetch<AdminDealer>(`/api/admin/dealers/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export function listAdminDealerFarmers(
+  id: string,
+  params: { search?: string; aimag?: string; page?: number; limit?: number } = {},
+) {
+  const query = queryString({
+    search: params.search,
+    aimag: params.aimag,
+    page: params.page ?? 1,
+    limit: params.limit ?? 50,
+  });
+
+  return authorizedFetch<FarmerListResult>(`/api/admin/dealers/${id}/farmers?${query}`);
 }
 
 export function listAdminLivestock(params: {
@@ -793,54 +831,6 @@ export function unlockTag(epc: string) {
   );
 }
 
-// --- Dealer registrations ---------------------------------------------------------
-
-export type DealerRegistrationStatus = "PENDING" | "APPROVED" | "REJECTED";
-
-export interface DealerRegistration {
-  id: string;
-  orgName: string;
-  contact: string;
-  prefixRequested: string;
-  status: DealerRegistrationStatus;
-  createdAt: string;
-  decidedAt?: string;
-}
-
-export function createDealerRegistration(input: {
-  orgName: string;
-  contact: string;
-  prefixRequested: string;
-}) {
-  return authorizedFetch<DealerRegistration>("/api/dealer-registrations", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-export function getMyDealerRegistration() {
-  return authorizedFetch<DealerRegistration | null>("/api/dealer-registrations/me");
-}
-
-export function listDealerRegistrations() {
-  return authorizedFetch<DealerRegistration[]>(
-    "/api/admin/dealer-registrations",
-  );
-}
-
-export function decideDealerRegistration(
-  id: string,
-  status: "APPROVED" | "REJECTED",
-) {
-  return authorizedFetch<DealerRegistration>(
-    `/api/admin/dealer-registrations/${id}`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({ status }),
-    },
-  );
-}
-
 // --- Dealer farmers ----------------------------------------------------------------
 
 export interface Farmer {
@@ -894,13 +884,30 @@ export function addFarmer(input: {
   });
 }
 
+export function getFarmer(id: string) {
+  return authorizedFetch<Farmer>(`/api/dealer/farmers/${id}`);
+}
+
+export function updateFarmer(
+  id: string,
+  input: {
+    phoneNumber?: string;
+    name?: string;
+    aimag?: string | null;
+    sum?: string | null;
+    status?: "ACTIVE" | "SUSPENDED";
+  },
+) {
+  return authorizedFetch<Farmer>(`/api/dealer/farmers/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
 export function removeFarmer(id: string) {
-  return authorizedFetch<{ id: string; removed: boolean }>(
-    `/api/dealer/farmers/${id}`,
-    {
-      method: "DELETE",
-    },
-  );
+  return authorizedFetch<{ removed: boolean; id: string }>(`/api/dealer/farmers/${id}`, {
+    method: "DELETE",
+  });
 }
 
 // --- Uploads -----------------------------------------------------------------------
